@@ -255,7 +255,34 @@ class Aemeath(QLabel):
 
     def _setup_menu(self) -> None:
         self._menu = QMenu(self)
-        self._chat_action = self._menu.addAction("和小爱聊天")
+        self._menu.setStyleSheet(
+            """
+            QMenu {
+                background: #ffffff;
+                border: 2px solid #ffb7d6;
+                border-radius: 14px;
+                padding: 6px;
+            }
+            QMenu::item {
+                border-radius: 10px;
+                padding: 8px 12px;
+                margin: 2px 0;
+                color: #6c2e4e;
+                background: transparent;
+                font-family: Menlo, Monaco, "SF Mono";
+                font-size: 12px;
+            }
+            QMenu::item:selected {
+                background: #fff0f7;
+                color: #8d365d;
+            }
+            QMenu::item:pressed {
+                background: #ffd9ea;
+                color: #7a2b4d;
+            }
+            """
+        )
+        self._chat_action = self._menu.addAction("飞讯")
         self._transform_action = self._menu.addAction("爱弥斯，变身！")
         self._hacker_action = self._menu.addAction("黑客爱弥斯！")
         self._seal_action = self._menu.addAction("")
@@ -472,6 +499,7 @@ class Aemeath(QLabel):
             self._chat_window = ChatWindow(
                 config_dir=self._config_path.parent,
                 api_key_getter=lambda: self._api_key,
+                icon_path=self.resources_dir / "icon.webp",
                 parent=None,
             )
             self._chat_window.destroyed.connect(self._on_chat_window_destroyed)

@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -49,11 +50,12 @@ class ChatWorker(QObject):
 
 
 class ChatWindow(QDialog):
-    def __init__(self, config_dir: Path, api_key_getter, parent=None) -> None:
+    def __init__(self, config_dir: Path, api_key_getter, icon_path: Path | None = None, parent=None) -> None:
         super().__init__(parent)
         self._config_dir = config_dir
         self._history_path = config_dir / "chat_history.jsonl"
         self._api_key_getter = api_key_getter
+        self._icon_path = icon_path
         self._records: list[dict[str, str]] = []
         self._thread: QThread | None = None
         self._worker: ChatWorker | None = None
@@ -61,7 +63,7 @@ class ChatWindow(QDialog):
         self._pending_timestamp: str = ""
         self._pending_prompt: str = ""
 
-        self.setWindowTitle("Aemeath Chat")
+        self.setWindowTitle("飞讯")
         self.setWindowFlags(
             Qt.WindowType.Window
             | Qt.WindowType.WindowStaysOnTopHint
@@ -83,12 +85,27 @@ class ChatWindow(QDialog):
         nav_layout.setContentsMargins(12, 8, 12, 8)
         nav_layout.setSpacing(8)
 
-        avatar = QLabel("A")
+        avatar = QLabel("")
         avatar.setObjectName("avatarBadge")
+        avatar.setFixedSize(28, 28)
+        if self._icon_path is not None and self._icon_path.exists():
+            pixmap = QPixmap(str(self._icon_path))
+            if not pixmap.isNull():
+                avatar.setPixmap(
+                    pixmap.scaled(
+                        28,
+                        28,
+                        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                )
+                avatar.setScaledContents(True)
+        else:
+            avatar.setText("飞")
         title_box = QVBoxLayout()
         title_box.setContentsMargins(0, 0, 0, 0)
         title_box.setSpacing(0)
-        title = QLabel("Aemeath")
+        title = QLabel("飞行雪绒")
         title.setObjectName("navTitle")
         subtitle = QLabel("在线")
         subtitle.setObjectName("navSubtitle")
@@ -124,7 +141,7 @@ class ChatWindow(QDialog):
         input_layout.setSpacing(8)
 
         self.input_box = QPlainTextEdit(input_frame)
-        self.input_box.setPlaceholderText("输入你想对 Aemeath 说的话...")
+        self.input_box.setPlaceholderText("输入...（暂只支持文本）")
         self.input_box.setObjectName("composerInput")
         self.input_box.setFixedHeight(52)
 
@@ -226,22 +243,34 @@ class ChatWindow(QDialog):
         wrapper = QWidget()
         row = QHBoxLayout(wrapper)
         row.setContentsMargins(6, 6, 6, 6)
+        row.setSpacing(0)
 
-        bubble = QFrame(wrapper)
+        side = QWidget(wrapper)
+        side_layout = QVBoxLayout(side)
+        side_layout.setContentsMargins(0, 0, 0, 0)
+        side_layout.setSpacing(4)
+
+        time_label = QLabel(ts, side)
+        time_label.setStyleSheet("color:#9ba3c7; font-size:11px;")
+        if role == "user":
+            time_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        else:
+            time_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        side_layout.addWidget(time_label)
+
+        bubble = QFrame(side)
         bubble_layout = QVBoxLayout(bubble)
-        bubble_layout.setContentsMargins(10, 8, 10, 8)
+        bubble_layout.setContentsMargins(12, 10, 12, 10)
         bubble_layout.setSpacing(4)
         bubble.setMaximumWidth(300)
 
-        sender = "我" if role == "user" else "Aemeath"
-        head = QLabel(f"{sender} · {ts}", bubble)
-        head.setStyleSheet("color:#9ba3c7; font-size:11px;")
         body = QLabel(text, bubble)
         body.setWordWrap(True)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        body.setStyleSheet('font-family: Menlo, Monaco, "SF Mono"; font-size: 12px;')
-        if pending:
-            body.setStyleSheet('color:#cfd7ff; font-family: Menlo, Monaco, "SF Mono"; font-size: 12px;')
+        body.setStyleSheet(
+            'font-family: Menlo, Monaco, "SF Mono"; font-size: 12px; '
+            "background: transparent; border: none; margin: 0; padding: 0;"
+        )
 
         if role == "user":
             bubble.setStyleSheet(
@@ -257,7 +286,8 @@ class ChatWindow(QDialog):
                 """
             )
             row.addStretch(1)
-            row.addWidget(bubble)
+            side_layout.addWidget(bubble)
+            row.addWidget(side)
         else:
             bubble.setStyleSheet(
                 """
@@ -267,10 +297,10 @@ class ChatWindow(QDialog):
                 color:#2b1c2a;
                 """
             )
-            row.addWidget(bubble)
+            side_layout.addWidget(bubble)
+            row.addWidget(side)
             row.addStretch(1)
 
-        bubble_layout.addWidget(head)
         bubble_layout.addWidget(body)
 
         item.setSizeHint(wrapper.sizeHint())
@@ -338,7 +368,7 @@ class ChatWindow(QDialog):
         self._pending_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self._pending_prompt = prompt
         self._add_chat_bubble("user", prompt, self._pending_timestamp)
-        self._pending_index = self._add_chat_bubble("assistant", "Aemeath 正在思考...", self._pending_timestamp, pending=True)
+        self._pending_index = self._add_chat_bubble("assistant", "用户输入中...", self._pending_timestamp, pending=True)
 
         messages = self._build_context_messages(prompt)
 
@@ -387,7 +417,7 @@ class ChatWindow(QDialog):
 
     def _show_history_viewer(self) -> None:
         viewer = QDialog(self)
-        viewer.setWindowTitle("Aemeath 对话回顾")
+        viewer.setWindowTitle("飞讯 对话回顾")
         viewer.resize(390, 700)
         root = QVBoxLayout(viewer)
         panel = QListWidget(viewer)
@@ -395,7 +425,7 @@ class ChatWindow(QDialog):
         for item in self._records:
             ts = item.get("timestamp", "")
             panel.addItem(QListWidgetItem(f"[{ts}] 你：{item['user']}"))
-            panel.addItem(QListWidgetItem(f"[{ts}] Aemeath：{item['assistant']}"))
+            panel.addItem(QListWidgetItem(f"[{ts}] 飞行雪绒：{item['assistant']}"))
             panel.addItem(QListWidgetItem("-" * 34))
         root.addWidget(panel)
         viewer.exec()
