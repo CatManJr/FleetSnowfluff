@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import shutil
 import subprocess
 import sys
 import time
@@ -11,9 +12,10 @@ from pathlib import Path
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QCursor, QGuiApplication, QMouseEvent, QMovie, QPixmap, QTransform
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
-from PySide6.QtWidgets import QApplication, QLabel, QMenu, QMessageBox
+from PySide6.QtWidgets import QApplication, QFileDialog, QLabel, QMenu, QMessageBox
 
 from .chat_window import ChatWindow
+from .music_window import MusicWindow
 from .seal_widget import SealWidget
 from .settings_dialog import SettingsDialog
 
@@ -42,7 +44,11 @@ class Aemeath(QLabel):
         self._last_fullscreen_state = False
         self._last_fullscreen_checked_at = 0.0
         self._chat_window: ChatWindow | None = None
+        self._music_window: MusicWindow | None = None
         self._persona_prompt = self._load_persona_prompt()
+        self._playlist_order: list[Path] = []
+        self._playlist_index: int = -1
+        self._supported_music_exts = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
 
         self._movies = {}
         self._load_movies()
@@ -262,6 +268,7 @@ class Aemeath(QLabel):
         self._audio_output.setVolume(0.7)
         self._player = QMediaPlayer(self)
         self._player.setAudioOutput(self._audio_output)
+        self._player.mediaStatusChanged.connect(self._on_media_status_changed)
 
     def _setup_menu(self) -> None:
         self._menu = QMenu(self)
@@ -549,28 +556,150 @@ class Aemeath(QLabel):
         self._spawn_seals(random.randint(1, 6))
 
     def _play_random_music(self) -> None:
-        music_dir = self.resources_dir / "music"
-        if not music_dir.exists():
-            QMessageBox.information(
-                self,
-                "暂无音乐",
-                "未找到 resources/music 目录，上传音乐后可播放。",
-            )
-            return
+        self._open_music_window()
+        self._start_random_loop()
 
-        supported_exts = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
-        tracks = [p for p in music_dir.iterdir() if p.suffix.lower() in supported_exts]
+    def _music_dir(self) -> Path:
+        return self.resources_dir / "music"
+
+    def _list_music_tracks(self) -> list[Path]:
+        music_dir = self._music_dir()
+        if not music_dir.exists():
+            return []
+        return sorted(
+            [p for p in music_dir.iterdir() if p.is_file() and p.suffix.lower() in self._supported_music_exts],
+            key=lambda p: p.name.lower(),
+        )
+
+    def _start_random_loop(self) -> bool:
+        tracks = self._list_music_tracks()
         if not tracks:
             QMessageBox.information(
                 self,
                 "暂无音乐",
-                "resources/music 目录中没有可播放的音乐文件。",
+                "未找到可播放音乐。请导入到 resources/music 后再试。",
             )
-            return
+            return False
+        self._playlist_order = tracks[:]
+        random.shuffle(self._playlist_order)
+        self._playlist_index = 0
+        self._play_current_playlist_track()
+        return True
 
-        track = random.choice(tracks)
+    def _play_current_playlist_track(self) -> None:
+        if not self._playlist_order or self._playlist_index < 0:
+            return
+        track = self._playlist_order[self._playlist_index]
         self._player.setSource(QUrl.fromLocalFile(str(track)))
         self._player.play()
+
+    def _play_next_track(self) -> None:
+        if not self._playlist_order:
+            if not self._start_random_loop():
+                return
+            return
+        self._playlist_index = (self._playlist_index + 1) % len(self._playlist_order)
+        self._play_current_playlist_track()
+
+    def _play_prev_track(self) -> None:
+        if not self._playlist_order:
+            if not self._start_random_loop():
+                return
+            return
+        self._playlist_index = (self._playlist_index - 1) % len(self._playlist_order)
+        self._play_current_playlist_track()
+
+    def _play_selected_track(self, track_path: Path) -> None:
+        tracks = self._list_music_tracks()
+        if not tracks:
+            return
+        if track_path not in tracks:
+            return
+        remainder = [t for t in tracks if t != track_path]
+        random.shuffle(remainder)
+        self._playlist_order = [track_path, *remainder]
+        self._playlist_index = 0
+        self._play_current_playlist_track()
+
+    def _toggle_music_play_pause(self) -> None:
+        if self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+            self._player.pause()
+            return
+        if self._player.source().isEmpty():
+            self._start_random_loop()
+            return
+        self._player.play()
+
+    def _is_music_playing(self) -> bool:
+        return self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+
+    def _on_media_status_changed(self, status) -> None:
+        if status == QMediaPlayer.MediaStatus.EndOfMedia:
+            self._play_next_track()
+            if self._music_window is not None:
+                self._music_window.refresh_tracks()
+
+    def _current_track(self) -> Path | None:
+        if not self._playlist_order or self._playlist_index < 0:
+            return None
+        if self._playlist_index >= len(self._playlist_order):
+            return None
+        return self._playlist_order[self._playlist_index]
+
+    def _stop_music_playback(self) -> None:
+        self._player.stop()
+        self._playlist_order = []
+        self._playlist_index = -1
+
+    def _import_music_files(self) -> None:
+        files, _ = QFileDialog.getOpenFileNames(
+            None,
+            "导入音乐到曲库",
+            str(Path.home()),
+            "Audio Files (*.mp3 *.wav *.m4a *.flac *.ogg)",
+        )
+        if not files:
+            return
+        music_dir = self._music_dir()
+        music_dir.mkdir(parents=True, exist_ok=True)
+        imported = 0
+        for file_path in files:
+            src = Path(file_path)
+            dst = music_dir / src.name
+            try:
+                shutil.copy2(src, dst)
+                imported += 1
+            except OSError:
+                continue
+        QMessageBox.information(self, "导入完成", f"已导入 {imported} 首音乐。")
+        if self._music_window is not None:
+            self._music_window.refresh_tracks()
+
+    def _open_music_window(self) -> None:
+        if self._music_window is None:
+            self._music_window = MusicWindow(
+                icon_path=self.resources_dir / "icon.webp",
+                playlist_bg_path=self.resources_dir / "music" / "player.jpg",
+                list_tracks_fn=self._list_music_tracks,
+                import_tracks_fn=self._import_music_files,
+                start_random_loop_fn=self._start_random_loop,
+                play_track_fn=self._play_selected_track,
+                play_next_fn=self._play_next_track,
+                play_prev_fn=self._play_prev_track,
+                current_track_fn=self._current_track,
+                toggle_play_pause_fn=self._toggle_music_play_pause,
+                is_playing_fn=self._is_music_playing,
+                stop_playback_fn=self._stop_music_playback,
+                parent=None,
+            )
+            self._music_window.destroyed.connect(self._on_music_window_destroyed)
+        self._music_window.refresh_tracks()
+        self._music_window.show()
+        self._music_window.raise_()
+        self._music_window.activateWindow()
+
+    def _on_music_window_destroyed(self) -> None:
+        self._music_window = None
 
     def _quit_app(self) -> None:
         self._clear_seals()
