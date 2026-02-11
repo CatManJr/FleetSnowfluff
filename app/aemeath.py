@@ -12,6 +12,7 @@ from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QCursor, QGuiApplication, QMouseEvent, QMovie, QPixmap, QTransform
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import QApplication, QLabel, QMenu, QMessageBox
+from PySide6.QtWidgets import QInputDialog
 
 from .seal_widget import SealWidget
 from .settings_dialog import SettingsDialog
@@ -473,11 +474,51 @@ class Aemeath(QLabel):
                 "请先右键角色打开设置，填写并保存 DeepSeek API Key。",
             )
             return
-        QMessageBox.information(
+        prompt, ok = QInputDialog.getMultiLineText(
             self,
-            "待实现",
-            "“和小爱聊天”将接入 DeepSeek API，当前版本暂未实现。",
+            "和 Aemeath 聊天",
+            "你想对 Aemeath 说什么：",
         )
+        if not ok:
+            return
+        prompt = prompt.strip()
+        if not prompt:
+            return
+
+        try:
+            from openai import OpenAI
+        except ImportError:
+            QMessageBox.warning(
+                self,
+                "缺少依赖",
+                "未安装 openai SDK，请先执行：uv add openai",
+            )
+            return
+
+        try:
+            client = OpenAI(api_key=self._api_key, base_url="https://api.deepseek.com")
+            response = client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are Aemeath, a cute desktop pet assistant. Keep replies concise and warm.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.7,
+            )
+            answer = response.choices[0].message.content if response.choices else ""
+            answer = (answer or "").strip()
+            if not answer:
+                answer = "Aemeath 暂时没有想好怎么回复。"
+            QMessageBox.information(self, "Aemeath", answer)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "请求失败",
+                f"调用 DeepSeek 失败：{exc}",
+            )
 
     def _transform_emis(self) -> None:
         QMessageBox.information(

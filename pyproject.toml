@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "openai>=2.20.0",
     "openapi>=2.0.0",
     "opencv-python-headless>=4.13.0.92",
     "pyinstaller>=6.18.0",
