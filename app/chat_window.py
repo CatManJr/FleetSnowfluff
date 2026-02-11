@@ -5,7 +5,6 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal
-from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -60,6 +59,7 @@ class ChatWindow(QDialog):
         self._worker: ChatWorker | None = None
         self._pending_index: int | None = None
         self._pending_timestamp: str = ""
+        self._pending_prompt: str = ""
 
         self.setWindowTitle("Aemeath Chat")
         self.setWindowFlags(
@@ -67,108 +67,157 @@ class ChatWindow(QDialog):
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.Tool
         )
-        self.resize(430, 720)
+        self.resize(390, 760)
         self._build_ui()
         self._load_history()
         self._render_records()
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 12, 12, 12)
-        root.setSpacing(10)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
+        nav = QFrame(self)
+        nav.setObjectName("navBar")
+        nav_layout = QHBoxLayout(nav)
+        nav_layout.setContentsMargins(12, 8, 12, 8)
+        nav_layout.setSpacing(8)
+
+        avatar = QLabel("A")
+        avatar.setObjectName("avatarBadge")
+        title_box = QVBoxLayout()
+        title_box.setContentsMargins(0, 0, 0, 0)
+        title_box.setSpacing(0)
         title = QLabel("Aemeath")
-        title_font = QFont()
-        title_font.setPointSize(16)
-        title_font.setBold(True)
-        title.setFont(title_font)
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setObjectName("titleLabel")
+        title.setObjectName("navTitle")
+        subtitle = QLabel("在线")
+        subtitle.setObjectName("navSubtitle")
+        title_box.addWidget(title)
+        title_box.addWidget(subtitle)
+        nav_layout.addWidget(avatar)
+        nav_layout.addLayout(title_box, 1)
 
-        header_row = QHBoxLayout()
-        self.log_button = QPushButton("对话回顾", self)
+        self.log_button = QPushButton("记录", self)
+        self.log_button.setObjectName("navActionButton")
         self.log_button.clicked.connect(self._show_history_viewer)
-        self.clear_button = QPushButton("清空记录", self)
+        self.clear_button = QPushButton("清空", self)
+        self.clear_button.setObjectName("navActionButton")
         self.clear_button.clicked.connect(self._clear_history)
-        header_row.addWidget(self.log_button)
-        header_row.addWidget(self.clear_button)
+        nav_layout.addWidget(self.log_button)
+        nav_layout.addWidget(self.clear_button)
 
         chat_frame = QFrame(self)
         chat_frame.setObjectName("panelCard")
         chat_layout = QVBoxLayout(chat_frame)
-        chat_layout.setContentsMargins(12, 10, 12, 12)
-        chat_layout.setSpacing(8)
+        chat_layout.setContentsMargins(8, 8, 8, 8)
+        chat_layout.setSpacing(4)
         self.chat_list = QListWidget(chat_frame)
         self.chat_list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
         self.chat_list.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
+        self.chat_list.setObjectName("chatTimeline")
         chat_layout.addWidget(self.chat_list)
 
         input_frame = QFrame(self)
-        input_frame.setObjectName("panelCard")
-        input_layout = QVBoxLayout(input_frame)
-        input_layout.setContentsMargins(10, 10, 10, 10)
+        input_frame.setObjectName("composerBar")
+        input_layout = QHBoxLayout(input_frame)
+        input_layout.setContentsMargins(10, 8, 10, 8)
         input_layout.setSpacing(8)
+
         self.input_box = QTextEdit(input_frame)
         self.input_box.setPlaceholderText("输入你想对 Aemeath 说的话...")
-        self.input_box.setFixedHeight(110)
-        send_row = QHBoxLayout()
-        self.send_button = QPushButton("发送", input_frame)
-        self.send_button.clicked.connect(self._send_message)
-        send_row.addStretch(1)
-        send_row.addWidget(self.send_button)
-        input_layout.addWidget(self.input_box)
-        input_layout.addLayout(send_row)
+        self.input_box.setObjectName("composerInput")
+        self.input_box.setFixedHeight(52)
+        self.input_box.setAcceptRichText(False)
 
-        root.addWidget(title)
-        root.addLayout(header_row)
+        self.send_button = QPushButton("发送", input_frame)
+        self.send_button.setObjectName("sendButton")
+        self.send_button.clicked.connect(self._send_message)
+
+        input_layout.addWidget(self.input_box, 1)
+        input_layout.addWidget(self.send_button)
+
+        root.addWidget(nav)
         root.addWidget(chat_frame, 1)
         root.addWidget(input_frame)
 
         self.setStyleSheet(
             """
             QDialog {
-                background: #0f0f14;
-                color: #ffffff;
+                background: #fff7fb;
+                color: #2a1f2a;
             }
-            QLabel#titleLabel {
-                padding: 10px;
-                border-radius: 12px;
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #fd1d1d,
-                    stop:0.5 #c13584,
-                    stop:1 #833ab4
-                );
+            QFrame#navBar {
+                background: #ffffff;
+                border-bottom: 1px solid #ffd3e6;
+            }
+            QLabel#avatarBadge {
+                min-width: 28px;
+                min-height: 28px;
+                max-width: 28px;
+                max-height: 28px;
+                border-radius: 14px;
+                background: #ff5fa2;
+                color: #ffffff;
+                font-weight: 700;
+                qproperty-alignment: AlignCenter;
+            }
+            QLabel#navTitle {
+                font-size: 14px;
+                font-weight: 700;
+                color: #221626;
+            }
+            QLabel#navSubtitle {
+                font-size: 11px;
+                color: #9a6b85;
+            }
+            QPushButton#navActionButton {
+                background: #fff0f7;
+                border: 2px solid #ff9dc6;
+                border-radius: 10px;
+                color: #8d365d;
+                padding: 4px 8px;
+                font-size: 12px;
+                font-family: Menlo, Monaco, monospace;
             }
             QFrame#panelCard {
-                background: #151822;
-                border: 1px solid #252a3a;
-                border-radius: 12px;
-            }
-            QTextEdit {
-                background: #0d1018;
-                border: 1px solid #31384d;
-                border-radius: 10px;
-                padding: 8px;
-                color: #ffffff;
-            }
-            QListWidget {
-                background: #0d1018;
-                border: 1px solid #31384d;
-                border-radius: 10px;
-                color: #ffffff;
-            }
-            QPushButton {
-                background: #405de6;
+                background: #fff7fb;
                 border: none;
-                border-radius: 10px;
+            }
+            QListWidget#chatTimeline {
+                background: #fff7fb;
+                border: none;
+                color: #2a1f2a;
+            }
+            QFrame#composerBar {
+                background: #ffffff;
+                border-top: 1px solid #ffd3e6;
+            }
+            QTextEdit#composerInput {
+                background: #fff2f8;
+                border: 2px solid #ffb3d4;
+                border-radius: 16px;
+                padding: 8px;
+                color: #2a1f2a;
+                font-family: Menlo, Monaco, monospace;
+                font-size: 12px;
+            }
+            QPushButton#sendButton {
+                min-width: 64px;
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #ff5fa2,
+                    stop:1 #ff8cc3
+                );
+                border: 2px solid #ff4f98;
+                border-radius: 16px;
                 color: #ffffff;
-                padding: 8px 12px;
                 font-weight: 600;
+                font-family: Menlo, Monaco, monospace;
             }
             QPushButton:disabled {
-                background: #343b57;
-                color: #a7abc0;
+                background: #f3dbe8;
+                border-color: #e8bfd3;
+                color: #a68596;
             }
             """
         )
@@ -191,15 +240,34 @@ class ChatWindow(QDialog):
         body = QLabel(text, bubble)
         body.setWordWrap(True)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        body.setStyleSheet("font-family: Menlo, Monaco, monospace; font-size: 12px;")
         if pending:
-            body.setStyleSheet("color:#cfd7ff;")
+            body.setStyleSheet("color:#cfd7ff; font-family: Menlo, Monaco, monospace; font-size: 12px;")
 
         if role == "user":
-            bubble.setStyleSheet("background:#405de6; border-radius:12px; color:#ffffff;")
+            bubble.setStyleSheet(
+                """
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #ff5fa2,
+                    stop:1 #ff8cc3
+                );
+                border: 2px solid #ff4f98;
+                border-radius: 12px;
+                color: #ffffff;
+                """
+            )
             row.addStretch(1)
             row.addWidget(bubble)
         else:
-            bubble.setStyleSheet("background:#2a2f44; border-radius:12px; color:#ffffff;")
+            bubble.setStyleSheet(
+                """
+                background:#fff0f7;
+                border: 2px solid #ffb7d6;
+                border-radius:12px;
+                color:#2b1c2a;
+                """
+            )
             row.addWidget(bubble)
             row.addStretch(1)
 
@@ -269,6 +337,7 @@ class ChatWindow(QDialog):
         self.input_box.clear()
 
         self._pending_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self._pending_prompt = prompt
         self._add_chat_bubble("user", prompt, self._pending_timestamp)
         self._pending_index = self._add_chat_bubble("assistant", "Aemeath 正在思考...", self._pending_timestamp, pending=True)
 
@@ -278,19 +347,20 @@ class ChatWindow(QDialog):
         self._worker = ChatWorker(api_key=api_key, messages=messages)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
-        self._worker.finished.connect(lambda text: self._on_reply_success(prompt, text))
+        self._worker.finished.connect(self._on_reply_success, Qt.ConnectionType.QueuedConnection)
         self._worker.failed.connect(self._on_reply_failed)
         self._worker.finished.connect(self._thread.quit)
         self._worker.failed.connect(self._thread.quit)
         self._thread.finished.connect(self._cleanup_worker)
         self._thread.start()
 
-    def _on_reply_success(self, prompt: str, answer: str) -> None:
+    def _on_reply_success(self, answer: str) -> None:
         if self._pending_index is not None and 0 <= self._pending_index < self.chat_list.count():
             self.chat_list.takeItem(self._pending_index)
             self._add_chat_bubble("assistant", answer, self._pending_timestamp)
-        self._append_history(prompt, answer)
+        self._append_history(self._pending_prompt, answer)
         self._pending_index = None
+        self._pending_prompt = ""
         self.send_button.setDisabled(False)
         self.input_box.setDisabled(False)
 
@@ -319,7 +389,7 @@ class ChatWindow(QDialog):
     def _show_history_viewer(self) -> None:
         viewer = QDialog(self)
         viewer.setWindowTitle("Aemeath 对话回顾")
-        viewer.resize(520, 640)
+        viewer.resize(390, 700)
         root = QVBoxLayout(viewer)
         panel = QListWidget(viewer)
         panel.setSelectionMode(QListWidget.SelectionMode.NoSelection)
