@@ -13,8 +13,8 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -123,11 +123,10 @@ class ChatWindow(QDialog):
         input_layout.setContentsMargins(10, 8, 10, 8)
         input_layout.setSpacing(8)
 
-        self.input_box = QTextEdit(input_frame)
+        self.input_box = QPlainTextEdit(input_frame)
         self.input_box.setPlaceholderText("输入你想对 Aemeath 说的话...")
         self.input_box.setObjectName("composerInput")
         self.input_box.setFixedHeight(52)
-        self.input_box.setAcceptRichText(False)
 
         self.send_button = QPushButton("发送", input_frame)
         self.send_button.setObjectName("sendButton")
@@ -177,7 +176,7 @@ class ChatWindow(QDialog):
                 color: #8d365d;
                 padding: 4px 8px;
                 font-size: 12px;
-                font-family: Menlo, Monaco, monospace;
+                font-family: Menlo, Monaco, "SF Mono";
             }
             QFrame#panelCard {
                 background: #fff7fb;
@@ -192,13 +191,13 @@ class ChatWindow(QDialog):
                 background: #ffffff;
                 border-top: 1px solid #ffd3e6;
             }
-            QTextEdit#composerInput {
+            QPlainTextEdit#composerInput {
                 background: #fff2f8;
                 border: 2px solid #ffb3d4;
                 border-radius: 16px;
                 padding: 8px;
                 color: #2a1f2a;
-                font-family: Menlo, Monaco, monospace;
+                font-family: Menlo, Monaco, "SF Mono";
                 font-size: 12px;
             }
             QPushButton#sendButton {
@@ -212,7 +211,7 @@ class ChatWindow(QDialog):
                 border-radius: 16px;
                 color: #ffffff;
                 font-weight: 600;
-                font-family: Menlo, Monaco, monospace;
+                font-family: Menlo, Monaco, "SF Mono";
             }
             QPushButton:disabled {
                 background: #f3dbe8;
@@ -240,9 +239,9 @@ class ChatWindow(QDialog):
         body = QLabel(text, bubble)
         body.setWordWrap(True)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        body.setStyleSheet("font-family: Menlo, Monaco, monospace; font-size: 12px;")
+        body.setStyleSheet('font-family: Menlo, Monaco, "SF Mono"; font-size: 12px;')
         if pending:
-            body.setStyleSheet("color:#cfd7ff; font-family: Menlo, Monaco, monospace; font-size: 12px;")
+            body.setStyleSheet('color:#cfd7ff; font-family: Menlo, Monaco, "SF Mono"; font-size: 12px;')
 
         if role == "user":
             bubble.setStyleSheet(
