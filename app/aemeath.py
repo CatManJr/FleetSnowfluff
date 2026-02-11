@@ -71,6 +71,12 @@ class Aemeath(QLabel):
         self.idle_switch_timer.setInterval(4500)
         self.idle_switch_timer.timeout.connect(self._switch_idle_animation)
         self.idle_switch_timer.start()
+        self._flight_timer = QTimer(self)
+        self._flight_timer.setInterval(42)
+        self._flight_timer.timeout.connect(self._on_flight_tick)
+        self._flight_target: QPoint | None = None
+        self._flight_base_speed_px = 2.4
+        self._flight_fast_multiplier = 2.0
 
         self._load_config()
         self._setup_audio()
@@ -189,38 +195,106 @@ class Aemeath(QLabel):
     def _switch_idle_animation(self) -> None:
         if self._is_hovering:
             return
-        self._set_movie(random.choice(self.idle_ids))
-        self._randomize_idle_position()
+        # step0: switch action (must differ from previous one)
+        candidates = [mid for mid in self.idle_ids if mid != self._current_movie_id]
+        next_movie_id = random.choice(candidates) if candidates else random.choice(self.idle_ids)
+        self._stop_flight()
+        self._set_movie(next_movie_id)
 
-    def _randomize_idle_position(self) -> None:
+        # step1: whether to jump (20% no jump, 80% large flash jump)
+        should_jump = random.random() >= 0.2
+        if should_jump:
+            self._flash_move_large_range()
+
+        # step2: whether to move after switch (1.gif must move)
+        should_move = True if next_movie_id == 1 else (random.random() < 0.5)
+        if should_move:
+            self._start_slow_flight()
+
+    def _start_slow_flight(self) -> None:
         screen = QGuiApplication.primaryScreen()
         if screen is None:
             return
         area = screen.availableGeometry()
+        target = self._pick_random_position(
+            area=area,
+            min_distance=max(90, int(min(area.width(), area.height()) * 0.18)),
+        )
+        if target is None:
+            return
+        self._flight_target = target
+        self._flight_timer.start()
+
+    def _flash_move_large_range(self) -> None:
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        area = screen.availableGeometry()
+        target = self._pick_random_position(
+            area=area,
+            min_distance=max(140, int(min(area.width(), area.height()) * 0.3)),
+        )
+        if target is None:
+            return
+        self.move(target)
+        self._apply_edge_orientation(area)
+
+    def _pick_random_position(self, area: QRect, min_distance: int) -> QPoint | None:
         width = max(1, self.width())
         height = max(1, self.height())
+        min_x = area.left()
+        max_x = max(area.left(), area.right() - width)
+        min_y = area.top()
+        max_y = max(area.top(), area.bottom() - height)
+        current = self.pos()
+        for _ in range(16):
+            target = QPoint(
+                random.randint(min_x, max_x),
+                random.randint(min_y, max_y),
+            )
+            if (target - current).manhattanLength() >= min_distance:
+                return target
+        return QPoint(random.randint(min_x, max_x), random.randint(min_y, max_y))
 
-        edge_mode = random.random() < 0.45
-        if edge_mode:
-            side = random.choice(["left", "right", "top", "bottom"])
-            if side == "left":
-                x = area.left() - int(width * 0.35)
-                y = random.randint(area.top(), max(area.top(), area.bottom() - height))
-            elif side == "right":
-                x = area.right() - int(width * 0.65)
-                y = random.randint(area.top(), max(area.top(), area.bottom() - height))
-            elif side == "top":
-                x = random.randint(area.left(), max(area.left(), area.right() - width))
-                y = area.top() - int(height * 0.35)
-            else:
-                x = random.randint(area.left(), max(area.left(), area.right() - width))
-                y = area.bottom() - int(height * 0.65)
-        else:
-            x = random.randint(area.left(), max(area.left(), area.right() - width))
-            y = random.randint(area.top(), max(area.top(), area.bottom() - height))
+    def _stop_flight(self) -> None:
+        self._flight_target = None
+        if self._flight_timer.isActive():
+            self._flight_timer.stop()
 
-        self.move(x, y)
-        self._apply_edge_orientation(area)
+    def _on_flight_tick(self) -> None:
+        if self._flight_target is None:
+            self._stop_flight()
+            return
+        if self._is_hovering or self._drag_offset is not None:
+            self._stop_flight()
+            return
+
+        current = self.pos()
+        target = self._flight_target
+        dx = target.x() - current.x()
+        dy = target.y() - current.y()
+        distance = (dx * dx + dy * dy) ** 0.5
+        speed_px = self._current_flight_speed()
+        if distance <= speed_px:
+            self.move(target)
+            screen = QGuiApplication.primaryScreen()
+            if screen is not None:
+                self._apply_edge_orientation(screen.availableGeometry())
+            self._stop_flight()
+            return
+
+        step_x = int(round(dx / distance * speed_px))
+        step_y = int(round(dy / distance * speed_px))
+        if step_x == 0 and dx != 0:
+            step_x = 1 if dx > 0 else -1
+        if step_y == 0 and dy != 0:
+            step_y = 1 if dy > 0 else -1
+        self.move(current.x() + step_x, current.y() + step_y)
+
+    def _current_flight_speed(self) -> float:
+        if self._current_movie_id == 1:
+            return self._flight_base_speed_px * self._flight_fast_multiplier
+        return self._flight_base_speed_px
 
     def _apply_edge_orientation(self, area: QRect) -> None:
         if self._current_movie_id == 1:
@@ -702,6 +776,7 @@ class Aemeath(QLabel):
         self._music_window = None
 
     def _quit_app(self) -> None:
+        self._stop_flight()
         self._clear_seals()
         self.close()
         app = QApplication.instance()
@@ -710,6 +785,7 @@ class Aemeath(QLabel):
 
     def enterEvent(self, event) -> None:
         self._is_hovering = True
+        self._stop_flight()
         self._set_movie(self.hover_id)
         super().enterEvent(event)
 
@@ -721,10 +797,12 @@ class Aemeath(QLabel):
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.RightButton:
             # Open settings on release to avoid interrupting Qt mouse state.
+            self._stop_flight()
             self._right_click_pending = True
             event.accept()
             return
         if event.button() == Qt.MouseButton.LeftButton:
+            self._stop_flight()
             self._right_click_pending = False
             self._mouse_pressed_global = event.globalPosition().toPoint()
             self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
