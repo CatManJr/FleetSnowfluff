@@ -79,6 +79,7 @@ class Aemeath(QLabel):
         self._flight_fast_multiplier = 2.0
 
         self._load_config()
+        self._ensure_resource_container()
         self._setup_audio()
         self._setup_menu()
         # Keep it simple: pin topmost once at startup, no runtime stack polling.
@@ -95,12 +96,43 @@ class Aemeath(QLabel):
             return ""
 
     def _resolve_config_path(self) -> Path:
+        app_dir = self._app_data_dir("FleetSnowfluff")
+        legacy_dir = self._app_data_dir("Aemeath")
+        self._migrate_legacy_app_data(legacy_dir=legacy_dir, app_dir=app_dir)
+        return app_dir / "settings.json"
+
+    def _app_data_dir(self, app_name: str) -> Path:
         if sys.platform == "darwin":
-            return Path.home() / "Library" / "Application Support" / "Aemeath" / "settings.json"
+            return Path.home() / "Library" / "Application Support" / app_name
         if sys.platform.startswith("win"):
             appdata = os.environ.get("APPDATA", str(Path.home()))
-            return Path(appdata) / "Aemeath" / "settings.json"
-        return Path.home() / ".config" / "aemeath" / "settings.json"
+            return Path(appdata) / app_name
+        return Path.home() / ".config" / app_name.lower()
+
+    def _migrate_legacy_app_data(self, legacy_dir: Path, app_dir: Path) -> None:
+        """
+        Migrate user data from old app naming to FleetSnowfluff.
+        Copy-only strategy prevents accidental data loss.
+        """
+        if legacy_dir == app_dir or not legacy_dir.exists():
+            return
+        try:
+            app_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return
+        for src in legacy_dir.rglob("*"):
+            rel = src.relative_to(legacy_dir)
+            dst = app_dir / rel
+            try:
+                if src.is_dir():
+                    dst.mkdir(parents=True, exist_ok=True)
+                    continue
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                if dst.exists():
+                    continue
+                shutil.copy2(src, dst)
+            except OSError:
+                continue
 
     def _load_config(self) -> None:
         if not self._config_path.exists():
@@ -122,6 +154,36 @@ class Aemeath(QLabel):
             return True
         except OSError:
             return False
+
+    def _resource_container_dir(self) -> Path:
+        return self._config_path.parent / "resources"
+
+    def _resource_container_music_dir(self) -> Path:
+        return self._resource_container_dir() / "music"
+
+    def _ensure_resource_container(self) -> None:
+        """
+        Keep a writable runtime resource container under app data.
+        Bundled resources remain read-only; user imports also go here.
+        """
+        source_music_dir = self.resources_dir / "music"
+        target_music_dir = self._resource_container_music_dir()
+        try:
+            target_music_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return
+        if not source_music_dir.exists():
+            return
+        for src in source_music_dir.iterdir():
+            if not src.is_file():
+                continue
+            dst = target_music_dir / src.name
+            if dst.exists():
+                continue
+            try:
+                shutil.copy2(src, dst)
+            except OSError:
+                continue
 
     def _show_settings_dialog(self) -> None:
         dialog = SettingsDialog(api_key=self._api_key, parent=None)
@@ -634,7 +696,21 @@ class Aemeath(QLabel):
         self._start_random_loop()
 
     def _music_dir(self) -> Path:
-        return self.resources_dir / "music"
+        self._ensure_resource_container()
+        return self._resource_container_music_dir()
+
+    def _music_background_path(self) -> Path:
+        container_music_dir = self._music_dir()
+        for filename in ("player.jpg", "background.PNG", "background.png"):
+            candidate = container_music_dir / filename
+            if candidate.exists():
+                return candidate
+        # Fallback for dev-time safety if container copy fails.
+        for filename in ("player.jpg", "background.PNG", "background.png"):
+            candidate = self.resources_dir / "music" / filename
+            if candidate.exists():
+                return candidate
+        return self.resources_dir / "music" / "player.jpg"
 
     def _list_music_tracks(self) -> list[Path]:
         music_dir = self._music_dir()
@@ -753,7 +829,7 @@ class Aemeath(QLabel):
         if self._music_window is None:
             self._music_window = MusicWindow(
                 icon_path=self.resources_dir / "icon.webp",
-                playlist_bg_path=self.resources_dir / "music" / "player.jpg",
+                playlist_bg_path=self._music_background_path(),
                 list_tracks_fn=self._list_music_tracks,
                 import_tracks_fn=self._import_music_files,
                 start_random_loop_fn=self._start_random_loop,

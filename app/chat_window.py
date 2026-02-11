@@ -43,7 +43,7 @@ class ChatWorker(QObject):
             answer = response.choices[0].message.content if response.choices else ""
             answer = (answer or "").strip()
             if not answer:
-                answer = "Aemeath 暂时没有想好怎么回复。"
+                answer = "飞行雪绒 暂时没有想好怎么回复。"
             self.finished.emit(answer)
         except Exception as exc:  # noqa: BLE001
             self.failed.emit(str(exc))
@@ -443,7 +443,10 @@ class ChatWindow(QDialog):
         QMessageBox.warning(self, "请求失败", f"调用 DeepSeek 失败：{error_text}")
 
     def _build_context_messages(self, prompt: str) -> list[dict[str, str]]:
-        default_system = "You are Aemeath, a cute desktop pet assistant. Keep replies concise and warm."
+        default_system = (
+            "You are Feixing Xuerong (Fleet Snowfluff), a cute desktop pet assistant. "
+            "Keep replies concise and warm."
+        )
         if self._persona_prompt:
             system_content = (
                 "你必须严格遵循以下角色设定进行对话。"

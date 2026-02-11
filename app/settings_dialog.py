@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLineEdit,
 class SettingsDialog(QDialog):
     def __init__(self, api_key: str, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Aemeath 设置")
+        self.setWindowTitle("Fleet Snowfluff 设置")
         self.setModal(True)
         self.resize(420, 120)
 
