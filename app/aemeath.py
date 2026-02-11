@@ -12,8 +12,8 @@ from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QCursor, QGuiApplication, QMouseEvent, QMovie, QPixmap, QTransform
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import QApplication, QLabel, QMenu, QMessageBox
-from PySide6.QtWidgets import QInputDialog
 
+from .chat_window import ChatWindow
 from .seal_widget import SealWidget
 from .settings_dialog import SettingsDialog
 
@@ -41,6 +41,7 @@ class Aemeath(QLabel):
         self._visibility_suppressed = False
         self._last_fullscreen_state = False
         self._last_fullscreen_checked_at = 0.0
+        self._chat_window: ChatWindow | None = None
 
         self._movies = {}
         self._load_movies()
@@ -467,58 +468,19 @@ class Aemeath(QLabel):
         self._menu.exec(global_pos)
 
     def _chat_with_xiaoai(self) -> None:
-        if not self._api_key:
-            QMessageBox.information(
-                self,
-                "缺少 API Key",
-                "请先右键角色打开设置，填写并保存 DeepSeek API Key。",
+        if self._chat_window is None:
+            self._chat_window = ChatWindow(
+                config_dir=self._config_path.parent,
+                api_key_getter=lambda: self._api_key,
+                parent=None,
             )
-            return
-        prompt, ok = QInputDialog.getMultiLineText(
-            self,
-            "和 Aemeath 聊天",
-            "你想对 Aemeath 说什么：",
-        )
-        if not ok:
-            return
-        prompt = prompt.strip()
-        if not prompt:
-            return
+            self._chat_window.destroyed.connect(self._on_chat_window_destroyed)
+        self._chat_window.show()
+        self._chat_window.raise_()
+        self._chat_window.activateWindow()
 
-        try:
-            from openai import OpenAI
-        except ImportError:
-            QMessageBox.warning(
-                self,
-                "缺少依赖",
-                "未安装 openai SDK，请先执行：uv add openai",
-            )
-            return
-
-        try:
-            client = OpenAI(api_key=self._api_key, base_url="https://api.deepseek.com")
-            response = client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are Aemeath, a cute desktop pet assistant. Keep replies concise and warm.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.7,
-            )
-            answer = response.choices[0].message.content if response.choices else ""
-            answer = (answer or "").strip()
-            if not answer:
-                answer = "Aemeath 暂时没有想好怎么回复。"
-            QMessageBox.information(self, "Aemeath", answer)
-        except Exception as exc:
-            QMessageBox.warning(
-                self,
-                "请求失败",
-                f"调用 DeepSeek 失败：{exc}",
-            )
+    def _on_chat_window_destroyed(self) -> None:
+        self._chat_window = None
 
     def _transform_emis(self) -> None:
         QMessageBox.information(
