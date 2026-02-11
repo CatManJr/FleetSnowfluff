@@ -1,0 +1,12 @@
+[project]
+name = "src"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "openapi>=2.0.0",
+    "opencv-python-headless>=4.13.0.92",
+    "pyinstaller>=6.18.0",
+    "pyside6>=6.10.2",
+]
