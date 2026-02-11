@@ -83,7 +83,7 @@ class MarqueeLabel(QLabel):
         self._gap = 36
         self._scroll_speed_px = 1
         self._timer = QTimer(self)
-        self._timer.setInterval(28)
+        self._timer.setInterval(50)
         self._timer.timeout.connect(self._tick)
 
     def setMarqueeText(self, text: str) -> None:
@@ -515,6 +515,8 @@ class MusicWindow(QDialog):
         self._tracks: list[Path] = []
         self._track_infos: list[TrackInfo] = []
         self._mini_bar: MiniPlayerBar | None = None
+        self._track_info_cache: dict[Path, tuple[int, int, TrackInfo]] = {}
+        self._last_now_playing_key: tuple[str, bool] | None = None
 
         self.setWindowTitle("飞行雪绒电台")
         self.setWindowFlags(
@@ -527,7 +529,7 @@ class MusicWindow(QDialog):
         self.refresh_tracks()
 
         self._refresh_timer = QTimer(self)
-        self._refresh_timer.setInterval(1200)
+        self._refresh_timer.setInterval(2500)
         self._refresh_timer.timeout.connect(self._refresh_now_playing)
         self._refresh_timer.start()
 
@@ -872,17 +874,29 @@ class MusicWindow(QDialog):
 
     def _refresh_now_playing(self) -> None:
         current = self._current_track_fn()
+        is_playing = bool(self._is_playing_fn())
+        now_playing_key = (str(current) if current is not None else "", is_playing)
+        if now_playing_key == self._last_now_playing_key:
+            # Avoid repeated metadata I/O and repaint work when state is unchanged.
+            self._update_control_states()
+            self._sync_play_button()
+            return
+        self._last_now_playing_key = now_playing_key
         if current is None:
             self.now_playing.setText("当前播放：-")
             self._sync_current_track_highlight()
             if self._mini_bar is not None:
                 self._mini_bar.refresh_state()
+            self._update_control_states()
+            self._sync_play_button()
             return
         info = self._extract_track_info(current)
         self.now_playing.setText(f"当前播放：{info.title}  ·  {info.artist}")
         self._sync_current_track_highlight()
         if self._mini_bar is not None:
             self._mini_bar.refresh_state()
+        self._update_control_states()
+        self._sync_play_button()
 
     def _sync_play_button(self) -> None:
         is_playing = bool(self._is_playing_fn())
@@ -925,6 +939,17 @@ class MusicWindow(QDialog):
         title = track_path.stem
         artist = "未知艺术家"
         album = "未知专辑"
+        stat_mtime_ns = 0
+        stat_size = 0
+        try:
+            stat = track_path.stat()
+            stat_mtime_ns = stat.st_mtime_ns
+            stat_size = stat.st_size
+            cached = self._track_info_cache.get(track_path)
+            if cached is not None and cached[0] == stat_mtime_ns and cached[1] == stat_size:
+                return cached[2]
+        except OSError:
+            pass
         try:
             from mutagen import File as MutagenFile
 
@@ -935,7 +960,9 @@ class MusicWindow(QDialog):
                 album = self._pick_first(audio.get("album")) or album
         except Exception:
             pass
-        return TrackInfo(path=track_path, title=title, artist=artist, album=album)
+        info = TrackInfo(path=track_path, title=title, artist=artist, album=album)
+        self._track_info_cache[track_path] = (stat_mtime_ns, stat_size, info)
+        return info
 
     @staticmethod
     def _pick_first(value) -> str:
@@ -993,9 +1020,12 @@ class MusicWindow(QDialog):
     def changeEvent(self, event: QEvent) -> None:
         if event.type() == QEvent.Type.WindowStateChange:
             if self.isMinimized():
+                self._refresh_timer.stop()
                 self._show_mini_bar()
             else:
                 self._hide_mini_bar()
+                if not self._refresh_timer.isActive():
+                    self._refresh_timer.start()
                 self._refresh_now_playing()
                 self._apply_column_widths()
                 self._update_control_states()

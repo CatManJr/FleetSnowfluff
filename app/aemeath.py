@@ -63,6 +63,14 @@ class Aemeath(QLabel):
             self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
         self.setMouseTracking(True)
 
+        self._flight_timer = QTimer(self)
+        self._flight_timer.setInterval(58)
+        self._flight_timer.timeout.connect(self._on_flight_tick)
+        self._flight_target: QPoint | None = None
+        self._flight_base_speed_px = 10
+        self._flight_fast_multiplier = 2.0
+        self._idle_cycles_without_movie1 = 0
+
         self._set_movie(random.choice(self.idle_ids))
         self._place_initial_position()
         self.show()
@@ -71,12 +79,6 @@ class Aemeath(QLabel):
         self.idle_switch_timer.setInterval(4500)
         self.idle_switch_timer.timeout.connect(self._switch_idle_animation)
         self.idle_switch_timer.start()
-        self._flight_timer = QTimer(self)
-        self._flight_timer.setInterval(42)
-        self._flight_timer.timeout.connect(self._on_flight_tick)
-        self._flight_target: QPoint | None = None
-        self._flight_base_speed_px = 2.4
-        self._flight_fast_multiplier = 2.0
 
         self._load_config()
         self._ensure_resource_container()
@@ -232,6 +234,9 @@ class Aemeath(QLabel):
         if not movie.frameRect().isValid():
             movie.jumpToFrame(0)
         self._on_movie_frame_changed()
+        if movie_id == 1 and not self._is_hovering and self._drag_offset is None:
+            # Hard rule: 1.gif must be in flight whenever it becomes active.
+            self._start_slow_flight()
 
     def _on_movie_frame_changed(self, *_args) -> None:
         if self._current_movie is None:
@@ -259,7 +264,17 @@ class Aemeath(QLabel):
             return
         # step0: switch action (must differ from previous one)
         candidates = [mid for mid in self.idle_ids if mid != self._current_movie_id]
-        next_movie_id = random.choice(candidates) if candidates else random.choice(self.idle_ids)
+        if not candidates:
+            next_movie_id = random.choice(self.idle_ids)
+        elif 1 in candidates and self._idle_cycles_without_movie1 >= 3:
+            # Ensure 1.gif appears regularly even under unlucky randomness.
+            next_movie_id = 1
+        else:
+            next_movie_id = random.choice(candidates)
+        if next_movie_id == 1:
+            self._idle_cycles_without_movie1 = 0
+        else:
+            self._idle_cycles_without_movie1 += 1
         self._stop_flight()
         self._set_movie(next_movie_id)
 
@@ -269,7 +284,8 @@ class Aemeath(QLabel):
             self._flash_move_large_range()
 
         # step2: whether to move after switch (1.gif must move)
-        should_move = True if next_movie_id == 1 else (random.random() < 0.5)
+        # Non-1 actions: 80% move / 20% stay.
+        should_move = True if next_movie_id == 1 else (random.random() < 0.8)
         if should_move:
             self._start_slow_flight()
 
@@ -278,6 +294,12 @@ class Aemeath(QLabel):
         if screen is None:
             return
         area = screen.availableGeometry()
+        if self._current_movie_id == 1:
+            start_point, target = self._plan_movie1_flight(area)
+            self.move(start_point)
+            self._flight_target = target
+            self._flight_timer.start()
+            return
         target = self._pick_random_position(
             area=area,
             min_distance=max(90, int(min(area.width(), area.height()) * 0.18)),
@@ -286,6 +308,29 @@ class Aemeath(QLabel):
             return
         self._flight_target = target
         self._flight_timer.start()
+
+    def _plan_movie1_flight(self, area: QRect) -> tuple[QPoint, QPoint]:
+        width = max(1, self.width())
+        height = max(1, self.height())
+        min_y = area.top()
+        max_y = max(area.top(), area.bottom() - height)
+        span = max(1, area.width())
+        side_band = max(28, int(span * 0.14))
+
+        if not self._mirror_h:
+            # Facing right: spawn from left side, fly to right side.
+            start_x = random.randint(area.left(), min(area.left() + side_band, area.right() - width))
+            target_x_min = max(area.left(), area.right() - width - side_band)
+            target_x = random.randint(target_x_min, max(target_x_min, area.right() - width))
+        else:
+            # Facing left (mirrored): spawn from right side, fly to left side.
+            start_x_min = max(area.left(), area.right() - width - side_band)
+            start_x = random.randint(start_x_min, max(start_x_min, area.right() - width))
+            target_x = random.randint(area.left(), min(area.left() + side_band, area.right() - width))
+
+        start_y = random.randint(min_y, max_y)
+        target_y = random.randint(min_y, max_y)
+        return QPoint(start_x, start_y), QPoint(target_x, target_y)
 
     def _flash_move_large_range(self) -> None:
         screen = QGuiApplication.primaryScreen()
@@ -335,7 +380,7 @@ class Aemeath(QLabel):
         target = self._flight_target
         dx = target.x() - current.x()
         dy = target.y() - current.y()
-        distance = (dx * dx + dy * dy) ** 0.5
+        distance = (dx * dx + dy * dy) ** 1
         speed_px = self._current_flight_speed()
         if distance <= speed_px:
             self.move(target)
@@ -364,7 +409,7 @@ class Aemeath(QLabel):
             self._on_movie_frame_changed()
             return
 
-        margin = 32
+        margin = 16
         near_left = self.x() <= area.left() + margin
         near_right = self.x() + self.width() >= area.right() - margin
 
