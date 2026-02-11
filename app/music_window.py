@@ -624,39 +624,40 @@ class MusicWindow(QDialog):
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
 
-        ctrl_row1 = QHBoxLayout()
+        ctrl_row = QHBoxLayout()
+        ctrl_row.setSpacing(8)
         self.import_button = QPushButton("⤓")
         self.import_button.setObjectName("actionBtn")
         self.import_button.setToolTip("导入曲库")
         self.import_button.clicked.connect(self._on_import_clicked)
-        self.random_button = QPushButton("🔀")
-        self.random_button.setObjectName("actionBtn")
-        self.random_button.setToolTip("随机循环")
-        self.random_button.clicked.connect(self._on_random_clicked)
-        ctrl_row1.addWidget(self.import_button)
-        ctrl_row1.addWidget(self.random_button)
-
-        ctrl_row2 = QHBoxLayout()
-        self.play_button = QPushButton("▶")
-        self.play_button.setObjectName("actionBtn")
-        self.play_button.setToolTip("播放 / 暂停")
-        self.play_button.clicked.connect(self._on_toggle_play_pause)
         self.prev_button = QPushButton("⏮")
         self.prev_button.setObjectName("actionBtn")
         self.prev_button.setToolTip("上一首")
         self.prev_button.clicked.connect(self._play_prev_fn)
+        self.play_button = QPushButton("▶")
+        self.play_button.setObjectName("actionMainBtn")
+        self.play_button.setToolTip("播放 / 暂停")
+        self.play_button.clicked.connect(self._on_toggle_play_pause)
         self.next_button = QPushButton("⏭")
         self.next_button.setObjectName("actionBtn")
         self.next_button.setToolTip("下一首")
         self.next_button.clicked.connect(self._play_next_fn)
-        ctrl_row2.addWidget(self.play_button)
-        ctrl_row2.addWidget(self.prev_button)
-        ctrl_row2.addWidget(self.next_button)
+        self.random_button = QPushButton("🔀")
+        self.random_button.setObjectName("actionBtn")
+        self.random_button.setToolTip("重新随机排序")
+        self.random_button.clicked.connect(self._on_random_clicked)
+
+        ctrl_row.addWidget(self.import_button)
+        ctrl_row.addStretch(1)
+        ctrl_row.addWidget(self.prev_button)
+        ctrl_row.addWidget(self.play_button)
+        ctrl_row.addWidget(self.next_button)
+        ctrl_row.addStretch(1)
+        ctrl_row.addWidget(self.random_button)
 
         panel_layout.addWidget(self.now_playing)
         panel_layout.addWidget(self.track_list, 1)
-        panel_layout.addLayout(ctrl_row1)
-        panel_layout.addLayout(ctrl_row2)
+        panel_layout.addLayout(ctrl_row)
 
         root.addWidget(nav)
         root.addWidget(panel, 1)
@@ -769,6 +770,40 @@ class MusicWindow(QDialog):
                 color: #7a2b4d;
             }
             QPushButton#actionBtn:disabled {
+                background: #f2e4eb;
+                border: 2px solid #e6ccd8;
+                color: #b48ca3;
+            }
+            QPushButton#actionMainBtn {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #ffe8f5,
+                    stop:1 #ffbfdf
+                );
+                border: 2px solid #ff8fbe;
+                border-radius: 22px;
+                color: #7a2b4d;
+                min-width: 44px;
+                max-width: 44px;
+                min-height: 44px;
+                max-height: 44px;
+                padding: 0px;
+                font-family: Menlo, Monaco, "SF Mono";
+                font-size: 22px;
+                font-weight: 700;
+            }
+            QPushButton#actionMainBtn:hover {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #fff0f9,
+                    stop:1 #ffcae5
+                );
+            }
+            QPushButton#actionMainBtn:pressed {
+                background: #ffb3d8;
+                color: #6f2544;
+            }
+            QPushButton#actionMainBtn:disabled {
                 background: #f2e4eb;
                 border: 2px solid #e6ccd8;
                 color: #b48ca3;
