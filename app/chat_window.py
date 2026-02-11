@@ -49,13 +49,34 @@ class ChatWorker(QObject):
             self.failed.emit(str(exc))
 
 
+class ChatInputBox(QPlainTextEdit):
+    submitRequested = Signal()
+
+    def keyPressEvent(self, event) -> None:
+        is_enter = event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+        is_shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        if is_enter and not is_shift:
+            self.submitRequested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
 class ChatWindow(QDialog):
-    def __init__(self, config_dir: Path, api_key_getter, icon_path: Path | None = None, parent=None) -> None:
+    def __init__(
+        self,
+        config_dir: Path,
+        api_key_getter,
+        icon_path: Path | None = None,
+        persona_prompt: str = "",
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self._config_dir = config_dir
         self._history_path = config_dir / "chat_history.jsonl"
         self._api_key_getter = api_key_getter
         self._icon_path = icon_path
+        self._persona_prompt = persona_prompt.strip()
         self._records: list[dict[str, str]] = []
         self._thread: QThread | None = None
         self._worker: ChatWorker | None = None
@@ -85,16 +106,20 @@ class ChatWindow(QDialog):
         nav_layout.setContentsMargins(12, 8, 12, 8)
         nav_layout.setSpacing(8)
 
-        avatar = QLabel("")
+        avatar_wrap = QWidget(nav)
+        avatar_wrap.setObjectName("avatarWrap")
+        avatar_wrap.setFixedSize(42, 42)
+
+        avatar = QLabel(avatar_wrap)
         avatar.setObjectName("avatarBadge")
-        avatar.setFixedSize(28, 28)
+        avatar.setGeometry(0, 0, 42, 42)
         if self._icon_path is not None and self._icon_path.exists():
             pixmap = QPixmap(str(self._icon_path))
             if not pixmap.isNull():
                 avatar.setPixmap(
                     pixmap.scaled(
-                        28,
-                        28,
+                        42,
+                        42,
                         Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                         Qt.TransformationMode.SmoothTransformation,
                     )
@@ -102,6 +127,9 @@ class ChatWindow(QDialog):
                 avatar.setScaledContents(True)
         else:
             avatar.setText("飞")
+        status_dot = QLabel(avatar_wrap)
+        status_dot.setObjectName("onlineDot")
+        status_dot.setGeometry(30, 30, 12, 12)
         title_box = QVBoxLayout()
         title_box.setContentsMargins(0, 0, 0, 0)
         title_box.setSpacing(0)
@@ -111,7 +139,7 @@ class ChatWindow(QDialog):
         subtitle.setObjectName("navSubtitle")
         title_box.addWidget(title)
         title_box.addWidget(subtitle)
-        nav_layout.addWidget(avatar)
+        nav_layout.addWidget(avatar_wrap)
         nav_layout.addLayout(title_box, 1)
 
         self.log_button = QPushButton("记录", self)
@@ -140,10 +168,11 @@ class ChatWindow(QDialog):
         input_layout.setContentsMargins(10, 8, 10, 8)
         input_layout.setSpacing(8)
 
-        self.input_box = QPlainTextEdit(input_frame)
+        self.input_box = ChatInputBox(input_frame)
         self.input_box.setPlaceholderText("输入...（暂只支持文本）")
         self.input_box.setObjectName("composerInput")
         self.input_box.setFixedHeight(52)
+        self.input_box.submitRequested.connect(self._send_message)
 
         self.send_button = QPushButton("发送", input_frame)
         self.send_button.setObjectName("sendButton")
@@ -167,23 +196,33 @@ class ChatWindow(QDialog):
                 border-bottom: 1px solid #ffd3e6;
             }
             QLabel#avatarBadge {
-                min-width: 28px;
-                min-height: 28px;
-                max-width: 28px;
-                max-height: 28px;
-                border-radius: 14px;
+                min-width: 42px;
+                min-height: 42px;
+                max-width: 42px;
+                max-height: 42px;
+                border-radius: 21px;
                 background: #ff5fa2;
                 color: #ffffff;
                 font-weight: 700;
                 qproperty-alignment: AlignCenter;
+                border: 2px solid #ffc2de;
+            }
+            QLabel#onlineDot {
+                min-width: 12px;
+                min-height: 12px;
+                max-width: 12px;
+                max-height: 12px;
+                border-radius: 6px;
+                background: #30d158;
+                border: 2px solid #ffffff;
             }
             QLabel#navTitle {
-                font-size: 14px;
+                font-size: 20px;
                 font-weight: 700;
                 color: #221626;
             }
             QLabel#navSubtitle {
-                font-size: 11px;
+                font-size: 14px;
                 color: #9a6b85;
             }
             QPushButton#navActionButton {
@@ -192,7 +231,7 @@ class ChatWindow(QDialog):
                 border-radius: 10px;
                 color: #8d365d;
                 padding: 4px 8px;
-                font-size: 12px;
+                font-size: 17px;
                 font-family: Menlo, Monaco, "SF Mono";
             }
             QFrame#panelCard {
@@ -215,10 +254,10 @@ class ChatWindow(QDialog):
                 padding: 8px;
                 color: #2a1f2a;
                 font-family: Menlo, Monaco, "SF Mono";
-                font-size: 12px;
+                font-size: 18px;
             }
             QPushButton#sendButton {
-                min-width: 64px;
+                min-width: 80px;
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
                     stop:0 #ff5fa2,
@@ -229,6 +268,7 @@ class ChatWindow(QDialog):
                 color: #ffffff;
                 font-weight: 600;
                 font-family: Menlo, Monaco, "SF Mono";
+                font-size: 16px;
             }
             QPushButton:disabled {
                 background: #f3dbe8;
@@ -251,7 +291,7 @@ class ChatWindow(QDialog):
         side_layout.setSpacing(4)
 
         time_label = QLabel(ts, side)
-        time_label.setStyleSheet("color:#9ba3c7; font-size:11px;")
+        time_label.setStyleSheet("color:#9ba3c7; font-size:13px;")
         if role == "user":
             time_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         else:
@@ -268,7 +308,7 @@ class ChatWindow(QDialog):
         body.setWordWrap(True)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         body.setStyleSheet(
-            'font-family: Menlo, Monaco, "SF Mono"; font-size: 12px; '
+            'font-family: Menlo, Monaco, "SF Mono"; font-size: 16px; '
             "background: transparent; border: none; margin: 0; padding: 0;"
         )
 
@@ -403,10 +443,20 @@ class ChatWindow(QDialog):
         QMessageBox.warning(self, "请求失败", f"调用 DeepSeek 失败：{error_text}")
 
     def _build_context_messages(self, prompt: str) -> list[dict[str, str]]:
+        default_system = "You are Aemeath, a cute desktop pet assistant. Keep replies concise and warm."
+        if self._persona_prompt:
+            system_content = (
+                "你必须严格遵循以下角色设定进行对话。"
+                "如果用户请求与你的角色设定冲突，以角色设定优先。\n\n"
+                f"{self._persona_prompt}"
+            )
+        else:
+            system_content = default_system
+
         messages: list[dict[str, str]] = [
             {
                 "role": "system",
-                "content": "You are Aemeath, a cute desktop pet assistant. Keep replies concise and warm.",
+                "content": system_content,
             }
         ]
         for item in self._records[-20:]:

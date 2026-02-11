@@ -42,6 +42,7 @@ class Aemeath(QLabel):
         self._last_fullscreen_state = False
         self._last_fullscreen_checked_at = 0.0
         self._chat_window: ChatWindow | None = None
+        self._persona_prompt = self._load_persona_prompt()
 
         self._movies = {}
         self._load_movies()
@@ -71,6 +72,15 @@ class Aemeath(QLabel):
         # Keep it simple: pin topmost once at startup, no runtime stack polling.
         QTimer.singleShot(0, self._pin_topmost_once)
         QTimer.singleShot(300, self._pin_topmost_once)
+
+    def _load_persona_prompt(self) -> str:
+        prompt_path = self.resources_dir.parent / "src" / "config" / "FleetSnowfluff.json"
+        if not prompt_path.exists():
+            return ""
+        try:
+            return prompt_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
 
     def _resolve_config_path(self) -> Path:
         if sys.platform == "darwin":
@@ -500,6 +510,7 @@ class Aemeath(QLabel):
                 config_dir=self._config_path.parent,
                 api_key_getter=lambda: self._api_key,
                 icon_path=self.resources_dir / "icon.webp",
+                persona_prompt=self._persona_prompt,
                 parent=None,
             )
             self._chat_window.destroyed.connect(self._on_chat_window_destroyed)
