@@ -467,7 +467,7 @@ class ChatWindow(QDialog):
 
     def _show_history_viewer(self) -> None:
         viewer = QDialog(self)
-        viewer.setWindowTitle("飞讯 对话回顾")
+        viewer.setWindowTitle("聊天记录")
         viewer.resize(390, 700)
         root = QVBoxLayout(viewer)
         panel = QListWidget(viewer)
