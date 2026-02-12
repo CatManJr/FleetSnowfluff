@@ -81,7 +81,14 @@ uv run main.py
 
 ## 功能演示 🎥
 
-[Demo Video](https://github.com/CatManJr/FleetSnowfluff/blob/main/demo/demov0.1.4.mp4)
+<details>
+<summary>点击展开视频（如果你的平台支持）</summary>
+
+[![Demo Video 封面](https://img.shields.io/badge/点击此处播放演示视频-blue?logo=playstation)](https://github.com/CatManJr/FleetSnowfluff/blob/main/demo/demov0.1.4.mp4)
+
+如果页面无法直接播放，可手动复制链接后用本地播放器打开：  
+https://github.com/CatManJr/FleetSnowfluff/blob/main/demo/demov0.1.4.mp4
+</details>
 
 ## 开发日志
 2-12-2026（UTC-5），测试版锐意完善中。
