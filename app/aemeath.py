@@ -15,6 +15,11 @@ from PySide6.QtGui import QCursor, QGuiApplication, QMouseEvent, QMovie, QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import QApplication, QFileDialog, QLabel, QMenu, QMessageBox
 
+try:
+    from shiboken6 import isValid as shiboken_is_valid
+except ImportError:
+    shiboken_is_valid = None
+
 from .chat_window import ChatWindow
 from .music_window import MusicWindow
 from .seal_widget import SealWidget
@@ -91,6 +96,17 @@ class Aemeath(QLabel):
         # Keep it simple: pin topmost once at startup, no runtime stack polling.
         QTimer.singleShot(0, self._pin_topmost_once)
         QTimer.singleShot(300, self._pin_topmost_once)
+
+    @staticmethod
+    def _is_widget_alive(widget: object | None) -> bool:
+        if widget is None:
+            return False
+        if shiboken_is_valid is None:
+            return True
+        try:
+            return bool(shiboken_is_valid(widget))
+        except Exception:
+            return False
 
     def _load_persona_prompt(self) -> str:
         candidates = [
@@ -764,7 +780,7 @@ class Aemeath(QLabel):
         self._menu.exec(global_pos)
 
     def _chat_with_xiaoai(self) -> None:
-        if self._chat_window is None:
+        if not self._is_widget_alive(self._chat_window):
             self._chat_window = ChatWindow(
                 config_dir=self._config_path.parent,
                 api_key_getter=lambda: self._api_key,
@@ -772,7 +788,6 @@ class Aemeath(QLabel):
                 persona_prompt=self._persona_prompt,
                 parent=None,
             )
-            self._chat_window.destroyed.connect(self._on_chat_window_destroyed)
         self._chat_window.show()
         self._chat_window.raise_()
         self._chat_window.activateWindow()
@@ -791,9 +806,8 @@ class Aemeath(QLabel):
         if not video_path.exists():
             QMessageBox.warning(self, "资源缺失", f"未找到变身播片：{video_path.name}")
             return
-        if self._transform_window is None:
+        if not self._is_widget_alive(self._transform_window):
             self._transform_window = TransformWindow(parent=None)
-            self._transform_window.destroyed.connect(self._on_transform_window_destroyed)
             self._transform_window.playbackFinished.connect(self._on_transform_playback_finished)
             self._transform_window.playbackFailed.connect(self._on_transform_playback_failed)
         self._stop_flight()
@@ -967,7 +981,7 @@ class Aemeath(QLabel):
     def _on_media_status_changed(self, status) -> None:
         if status == QMediaPlayer.MediaStatus.EndOfMedia:
             self._play_next_track()
-            if self._music_window is not None:
+            if self._is_widget_alive(self._music_window):
                 self._music_window.refresh_tracks()
 
     def _current_track(self) -> Path | None:
@@ -1003,11 +1017,11 @@ class Aemeath(QLabel):
             except OSError:
                 continue
         QMessageBox.information(self, "导入完成", f"已导入 {imported} 首音乐。")
-        if self._music_window is not None:
+        if self._is_widget_alive(self._music_window):
             self._music_window.refresh_tracks()
 
     def _open_music_window(self) -> None:
-        if self._music_window is None:
+        if not self._is_widget_alive(self._music_window):
             self._music_window = MusicWindow(
                 icon_path=self.resources_dir / "icon.webp",
                 playlist_bg_path=self._music_background_path(),
@@ -1023,7 +1037,6 @@ class Aemeath(QLabel):
                 stop_playback_fn=self._stop_music_playback,
                 parent=None,
             )
-            self._music_window.destroyed.connect(self._on_music_window_destroyed)
         self._music_window.refresh_tracks()
         self._music_window.show()
         self._music_window.raise_()
@@ -1037,12 +1050,15 @@ class Aemeath(QLabel):
         self._stop_flight()
         if self.idle_switch_timer.isActive():
             self.idle_switch_timer.stop()
-        if self._transform_window is not None:
+        if self._is_widget_alive(self._transform_window):
             self._transform_window.close()
-        if self._chat_window is not None:
+        self._transform_window = None
+        if self._is_widget_alive(self._chat_window):
             self._chat_window.close()
-        if self._music_window is not None:
+        self._chat_window = None
+        if self._is_widget_alive(self._music_window):
             self._music_window.close()
+        self._music_window = None
         self._clear_seals()
         self.close()
         app = QApplication.instance()
