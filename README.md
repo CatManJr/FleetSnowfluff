@@ -12,7 +12,7 @@
 |
 |-src           存放这个仓库里的代码
 |
-__release       可以不手动创建，会随 build 脚本自动更新
+__release       可以不手动创建，会随build脚本src/release_macos.sh自动更新
 
 我使用uv进行python环境管理，因此首先在你的base环境中：
 ```bash
