@@ -7,7 +7,7 @@ set -euo pipefail
 #
 # Usage:
 #   ./release_macos.sh
-#   ./release_macos.sh 1.0.0
+#   ./release_macos.sh 0.1.1
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "This script only supports macOS."
@@ -16,9 +16,10 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+RELEASE_DIR="${PROJECT_ROOT}/release"
 
 APP_NAME="Fleet Snowfluff"
-DIST_DIR="${SCRIPT_DIR}/dist"
+DIST_DIR="${RELEASE_DIR}"
 BUILD_DIR="${SCRIPT_DIR}/build"
 DMG_STAGE_DIR="${SCRIPT_DIR}/dmg_stage"
 
@@ -39,7 +40,7 @@ PY
 fi
 
 DMG_NAME="FleetSnowfluff-${VERSION}-macOS.dmg"
-DMG_PATH="${SCRIPT_DIR}/${DMG_NAME}"
+DMG_PATH="${RELEASE_DIR}/${DMG_NAME}"
 
 ICON_OPT=()
 ICON_ICNS_PATH="${PROJECT_ROOT}/resources/icon.icns"
@@ -100,7 +101,8 @@ cd "${SCRIPT_DIR}"
 uv sync
 
 echo "==> Cleaning old artifacts"
-rm -rf "${BUILD_DIR}" "${DIST_DIR}" "${DMG_STAGE_DIR}" "${SCRIPT_DIR}/__pycache__" "${SCRIPT_DIR}"/*.spec "${DMG_PATH}"
+mkdir -p "${RELEASE_DIR}"
+rm -rf "${BUILD_DIR}" "${DMG_STAGE_DIR}" "${SCRIPT_DIR}/__pycache__" "${SCRIPT_DIR}"/*.spec "${DMG_PATH}" "${DIST_DIR}/${APP_NAME}.app"
 
 if [[ ! -f "${ICON_ICNS_PATH}" && -f "${ICON_WEBP_PATH}" ]]; then
   echo "==> Generating icon.icns from icon.webp"
@@ -117,6 +119,9 @@ PYI_CMD=(
   --noconfirm
   --clean
   --windowed
+  --distpath "${DIST_DIR}"
+  --workpath "${BUILD_DIR}"
+  --specpath "${SCRIPT_DIR}"
   --name "${APP_NAME}"
   --add-data "${PROJECT_ROOT}/resources:resources"
 )
