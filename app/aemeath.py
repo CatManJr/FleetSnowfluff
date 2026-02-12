@@ -761,19 +761,24 @@ class Aemeath(QLabel):
         )
 
     def _launch_hacker_terminal(self) -> None:
-        start_dir = self.resources_dir.parent / "src"
-        if not start_dir.exists():
-            start_dir = Path.home()
         if sys.platform == "darwin":
-            esc_dir = str(start_dir).replace("\\", "\\\\").replace('"', '\\"')
-            script = f'''
+            script = '''
             tell application "Terminal"
+                if not running then
+                    launch
+                end if
+                reopen
                 activate
-                do script "cd \\"{esc_dir}\\""
+                delay 0.1
+                if (count of windows) is 0 then
+                    do script ""
+                    delay 0.1
+                end if
+                activate
             end tell
             '''
             try:
-                subprocess.Popen(["osascript", "-e", script])
+                subprocess.run(["osascript", "-e", script], check=False)
             except OSError:
                 subprocess.Popen(["open", "-a", "Terminal"])
             QTimer.singleShot(450, self._print_terminal_greeting)
