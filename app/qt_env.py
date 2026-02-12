@@ -10,20 +10,30 @@ def bootstrap_qt_plugin_paths() -> None:
     os.environ["QT_FFMPEG_DEBUG"] = "0"
     os.environ["QT_LOGGING_RULES"] = (
         "*.debug=false;"
-        "*.ffmpeg.*=false;"
-        "*.multimedia.*=false;"
+        "qt.multimedia.*=false;"
+        "qt.multimedia.ffmpeg.*=false;"
         "qt.multimedia.ffmpeg=false;"
         "qt.multimedia.playbackengine.*=false;"
-        "qt.multimedia.integration.*=false"
+        "qt.multimedia.integration.*=false;"
+        "qt.accessibility.*=false;"
+        "qt.accessibility.table=false"
     )
+    # Guard against Qt runtime pollution from external environments (conda/homebrew).
+    # These variables can cause Qt to resolve incompatible framework/plugin binaries.
+    for key in ("QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH"):
+        os.environ.pop(key, None)
+    if sys.platform == "darwin":
+        os.environ["QT_QPA_PLATFORM"] = "cocoa"
+
     for raw_path in sys.path:
         if not raw_path:
             continue
         plugins_path = Path(raw_path) / "PySide6" / "Qt" / "plugins"
         platforms_path = plugins_path / "platforms"
         if platforms_path.exists():
-            os.environ.setdefault("QT_PLUGIN_PATH", str(plugins_path))
-            os.environ.setdefault("QT_QPA_PLATFORM_PLUGIN_PATH", str(platforms_path))
+            # Force override to avoid stale shell env poisoning.
+            os.environ["QT_PLUGIN_PATH"] = str(plugins_path)
+            os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = str(platforms_path)
             break
 
 

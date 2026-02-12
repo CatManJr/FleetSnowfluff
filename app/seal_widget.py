@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import QRect, QSize, Qt
-from PySide6.QtGui import QMouseEvent, QMovie
+from PySide6.QtGui import QMouseEvent, QMovie, QTransform
 from PySide6.QtWidgets import QLabel
 
 
@@ -19,9 +19,10 @@ class SealWidget(QLabel):
     ) -> None:
         super().__init__()
         self._on_closed = on_closed
+        self._mirror_h = random.choice([False, True])
         self._movie = QMovie(str(movie_path))
         self._movie.setScaledSize(QSize(100, 100))
-        self.setMovie(self._movie)
+        self._movie.frameChanged.connect(self._on_movie_frame_changed)
         self._movie.start()
 
         self.setWindowFlags(
@@ -38,6 +39,14 @@ class SealWidget(QLabel):
         self._place_randomly(geometry)
         self.show()
         self.raise_()
+
+    def _on_movie_frame_changed(self) -> None:
+        frame = self._movie.currentPixmap()
+        if frame.isNull():
+            return
+        if self._mirror_h:
+            frame = frame.transformed(QTransform().scale(-1, 1))
+        self.setPixmap(frame)
 
     def _place_randomly(self, geometry: QRect) -> None:
         max_x = max(geometry.left(), geometry.right() - self.width())

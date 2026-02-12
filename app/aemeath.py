@@ -57,6 +57,7 @@ class Aemeath(QLabel):
         self._persona_prompt = self._load_persona_prompt()
         self._playlist_order: list[Path] = []
         self._playlist_index: int = -1
+        self._pending_autoplay_music = False
         self._supported_music_exts = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
 
         self._movies = {}
@@ -79,6 +80,7 @@ class Aemeath(QLabel):
         self._flight_base_speed_px = 10
         self._flight_fast_multiplier = 2.0
         self._idle_cycles_without_movie1 = 0
+        self._movie1_forced_remaining = 0
 
         self._set_movie(random.choice(self.idle_ids))
         self._place_initial_position()
@@ -340,13 +342,19 @@ class Aemeath(QLabel):
         candidates = [mid for mid in self.idle_ids if mid != self._current_movie_id]
         if not candidates:
             next_movie_id = random.choice(self.idle_ids)
+        elif self._movie1_forced_remaining > 0 and 1 in candidates:
+            # Continue the forced sequence until 1.gif has appeared enough times.
+            next_movie_id = 1
         elif 1 in candidates and self._idle_cycles_without_movie1 >= 3:
-            # Ensure 1.gif appears regularly even under unlucky randomness.
+            # Starvation prevention: each trigger guarantees at least two 1.gif appearances.
+            self._movie1_forced_remaining = max(self._movie1_forced_remaining, 2)
             next_movie_id = 1
         else:
             next_movie_id = random.choice(candidates)
         if next_movie_id == 1:
             self._idle_cycles_without_movie1 = 0
+            if self._movie1_forced_remaining > 0:
+                self._movie1_forced_remaining -= 1
         else:
             self._idle_cycles_without_movie1 += 1
         self._stop_flight()
@@ -887,7 +895,18 @@ class Aemeath(QLabel):
         self._refresh_menu_labels()
 
     def _play_random_music(self) -> None:
+        if self._is_music_playing():
+            # If music is already running, only reveal the (possibly hidden) player UI.
+            self._pending_autoplay_music = False
+            self._open_music_window()
+            return
+        self._pending_autoplay_music = True
         self._open_music_window()
+
+    def _on_music_window_ready_for_playback(self) -> None:
+        if not self._pending_autoplay_music:
+            return
+        self._pending_autoplay_music = False
         self._start_random_loop()
 
     def _music_dir(self) -> Path:
@@ -937,6 +956,9 @@ class Aemeath(QLabel):
         track = self._playlist_order[self._playlist_index]
         self._player.setSource(QUrl.fromLocalFile(str(track)))
         self._player.play()
+        if self._is_widget_alive(self._music_window):
+            self._music_window.refresh_now_playing()
+            QTimer.singleShot(120, self._music_window.refresh_now_playing)
 
     def _play_next_track(self) -> None:
         if not self._playlist_order:
@@ -978,11 +1000,24 @@ class Aemeath(QLabel):
     def _is_music_playing(self) -> bool:
         return self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
 
+    def _music_position_ms(self) -> int:
+        return max(0, int(self._player.position()))
+
+    def _music_duration_ms(self) -> int:
+        return max(0, int(self._player.duration()))
+
+    def _seek_music_ms(self, position_ms: int) -> None:
+        duration = self._music_duration_ms()
+        if duration <= 0:
+            return
+        clamped = max(0, min(int(position_ms), duration))
+        self._player.setPosition(clamped)
+
     def _on_media_status_changed(self, status) -> None:
         if status == QMediaPlayer.MediaStatus.EndOfMedia:
             self._play_next_track()
             if self._is_widget_alive(self._music_window):
-                self._music_window.refresh_tracks()
+                self._music_window.refresh_now_playing()
 
     def _current_track(self) -> Path | None:
         if not self._playlist_order or self._playlist_index < 0:
@@ -1020,6 +1055,40 @@ class Aemeath(QLabel):
         if self._is_widget_alive(self._music_window):
             self._music_window.refresh_tracks()
 
+    def _remove_music_track(self, track_path: Path) -> bool:
+        track = Path(track_path)
+        if not track.exists():
+            return False
+        try:
+            track.resolve().relative_to(self._music_dir().resolve())
+        except (OSError, ValueError):
+            return False
+
+        old_order = self._playlist_order[:]
+        old_index = self._playlist_index
+        old_current = self._current_track()
+        try:
+            track.unlink()
+        except OSError:
+            return False
+
+        new_order = [p for p in old_order if p != track]
+        if not new_order:
+            self._stop_music_playback()
+            return True
+
+        self._playlist_order = new_order
+        if old_current == track:
+            self._playlist_index = min(max(0, old_index), len(new_order) - 1)
+            self._play_current_playlist_track()
+            return True
+
+        if old_current in new_order:
+            self._playlist_index = new_order.index(old_current)
+        else:
+            self._playlist_index = min(max(0, old_index), len(new_order) - 1)
+        return True
+
     def _open_music_window(self) -> None:
         if not self._is_widget_alive(self._music_window):
             self._music_window = MusicWindow(
@@ -1027,6 +1096,7 @@ class Aemeath(QLabel):
                 playlist_bg_path=self._music_background_path(),
                 list_tracks_fn=self._list_music_tracks,
                 import_tracks_fn=self._import_music_files,
+                remove_track_fn=self._remove_music_track,
                 start_random_loop_fn=self._start_random_loop,
                 play_track_fn=self._play_selected_track,
                 play_next_fn=self._play_next_track,
@@ -1034,16 +1104,25 @@ class Aemeath(QLabel):
                 current_track_fn=self._current_track,
                 toggle_play_pause_fn=self._toggle_music_play_pause,
                 is_playing_fn=self._is_music_playing,
+                get_position_ms_fn=self._music_position_ms,
+                get_duration_ms_fn=self._music_duration_ms,
+                seek_position_ms_fn=self._seek_music_ms,
                 stop_playback_fn=self._stop_music_playback,
                 parent=None,
             )
+            self._music_window.readyForPlayback.connect(self._on_music_window_ready_for_playback)
         self._music_window.refresh_tracks()
         self._music_window.show()
         self._music_window.raise_()
         self._music_window.activateWindow()
+        if self._pending_autoplay_music and self._music_window.is_ready_for_playback():
+            # Window is already ready (e.g., reopened). Defer to next tick
+            # to keep "load first, then play" behavior consistent.
+            QTimer.singleShot(0, self._on_music_window_ready_for_playback)
 
     def _on_music_window_destroyed(self) -> None:
         self._music_window = None
+        self._pending_autoplay_music = False
 
     def _quit_app(self) -> None:
         self._is_shutting_down = True

@@ -51,6 +51,10 @@ uv run main.py
 同样记得先准备 DeepSeek API Key，并在右键设置里填写。
 
 > ⚠️ ：虽然我尽可能做了容器隔离和uv隔离，但开发环境仍建议您做好备份与隔离防止我的屎山污染您的 Python 环境。
+> ⚠️ ：Qt6 在 MacOS 上会频繁出现环境漂移，常见睡一觉起来“qt.qpa.plugin: Could not find the Qt platform plugin "cocoa" in <Your ENV>” to fix this:
+```bash
+uv cache clean pyside6 pyside6-addons pyside6-essentials shiboken6 && rm -rf ".venv" && uv sync
+```
 
 ## 功能总览 🎮
 
@@ -61,7 +65,7 @@ uv run main.py
 
 ### 左键菜单 📌
 
-- `飞讯`：打开聊天窗口（DeepSeek + 人设 JSON 注入）。  
+- `打开飞讯`：打开聊天窗口（DeepSeek + 人设JSON 注入）。  
   ⚠️ OOC（出戏）是没有微调的大模型通病，建议先“热身几轮”稳定人设。
 - `爱弥斯，变身！`：播放游戏待机动画。  
   素材待优化。
@@ -69,7 +73,7 @@ uv run main.py
   💻 一起敲命令行！看看小爱说了什么吧～
 - `召唤雪绒海豹 / 拜拜海豹`：随机生成 1～12 只雪绒海豹。  
   🦭 点击海豹可消除；也可一键清空。
-- `你看，又唱`：打开飞行雪绒电台。  
+- `你看，又唱`：打开飞行雪绒电台。 仿Apple Music设计 
   🎵 支持导入本地音频，最小化后有悬浮播放条，关闭播放器自动停播。
   ⚠️泪点注意，可能第一首刷到《远航星的告别》
 - `拜拜`：退出应用。  
@@ -91,6 +95,7 @@ https://github.com/CatManJr/FleetSnowfluff/blob/main/demo/demov0.1.4.mp4
 </details>
 
 ## 开发日志
-2-12-2026（UTC-5），测试版锐意完善中。
+2-11-2026（UTC-5）：测试版锐意完善中。
 可能提供 English Version（虽然我也不知道有什么意义）
 Windows 版待开发，或请您安装开发者版本后自行封包
+2-12-2026（UTC-5）：优化飞行雪绒电台UI及交互设计，v0.1.5beta release

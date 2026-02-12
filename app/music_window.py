@@ -1,17 +1,17 @@
 from __future__ import annotations
 
+import html
 import sys
 from pathlib import Path
 from typing import NamedTuple
 
-from PySide6.QtCore import QEvent, QPoint, QSettings, QSignalBlocker
+from PySide6.QtCore import QEvent, QPoint, QSettings, QSignalBlocker, Signal
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import (
     QBrush,
     QCloseEvent,
     QColor,
     QFont,
-    QFontMetrics,
     QGuiApplication,
     QMouseEvent,
     QPainter,
@@ -21,14 +21,15 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
-    QGraphicsDropShadowEffect,
     QHeaderView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
+    QSlider,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -244,6 +245,9 @@ class MiniPlayerBar(QDialog):
         play_track_fn,
         extract_track_info_fn,
         is_playing_fn,
+        get_position_ms_fn,
+        get_duration_ms_fn,
+        seek_position_ms_fn,
     ) -> None:
         super().__init__(None)
         self._toggle_play_pause_fn = toggle_play_pause_fn
@@ -255,9 +259,13 @@ class MiniPlayerBar(QDialog):
         self._play_track_fn = play_track_fn
         self._extract_track_info_fn = extract_track_info_fn
         self._is_playing_fn = is_playing_fn
+        self._get_position_ms_fn = get_position_ms_fn
+        self._get_duration_ms_fn = get_duration_ms_fn
+        self._seek_position_ms_fn = seek_position_ms_fn
         self._settings = QSettings("FleetSnowfluff", "MusicWindow")
         self._drag_offset: QPoint | None = None
         self._has_custom_pos = False
+        self._is_scrubbing = False
 
         self.setWindowFlags(
             Qt.WindowType.Tool
@@ -265,21 +273,27 @@ class MiniPlayerBar(QDialog):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setWindowTitle("飞行雪绒电台 - Mini")
-        self.resize(460, 70)
+        self.setWindowOpacity(0.93)
+        self.resize(360, 60)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
+        root.setContentsMargins(1, 1, 1, 1)
         root.setSpacing(0)
 
         self.container = QFrame(self)
         self.container.setObjectName("miniCard")
-        container_layout = QHBoxLayout(self.container)
-        container_layout.setContentsMargins(12, 10, 12, 10)
-        container_layout.setSpacing(8)
+        container_layout = QVBoxLayout(self.container)
+        container_layout.setContentsMargins(10, 8, 10, 8)
+        container_layout.setSpacing(5)
 
-        self.track_label = MarqueeLabel("当前播放：-", self.container)
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(4)
+
+        self.track_label = MarqueeLabel("-", self.container)
         self.track_label.setObjectName("miniTitle")
-        self.track_label.setMinimumWidth(220)
+        # Keep title viewport compact to mimic Apple Music mini-player.
+        self.track_label.setFixedWidth(78)
 
         self.prev_button = QPushButton("⏮")
         self.prev_button.setObjectName("miniBtn")
@@ -301,17 +315,26 @@ class MiniPlayerBar(QDialog):
         self.playlist_button.setToolTip("播放列表")
         self.playlist_button.clicked.connect(self._show_playlist_menu)
 
-        self.restore_button = QPushButton("▢")
-        self.restore_button.setObjectName("miniBtn")
-        self.restore_button.setToolTip("展开播放器")
+        self.restore_button = QPushButton("⤢")
+        self.restore_button.setObjectName("miniBtnExpand")
+        self.restore_button.setToolTip("展开到完整播放器")
         self.restore_button.clicked.connect(self._restore_main_fn)
 
-        container_layout.addWidget(self.track_label, 1)
-        container_layout.addWidget(self.prev_button)
-        container_layout.addWidget(self.play_button)
-        container_layout.addWidget(self.next_button)
-        container_layout.addWidget(self.playlist_button)
-        container_layout.addWidget(self.restore_button)
+        self.progress_slider = QSlider(Qt.Orientation.Horizontal, self.container)
+        self.progress_slider.setObjectName("miniProgressSlider")
+        self.progress_slider.setRange(0, 0)
+        self.progress_slider.setEnabled(False)
+        self.progress_slider.sliderPressed.connect(self._on_progress_pressed)
+        self.progress_slider.sliderReleased.connect(self._on_progress_released)
+
+        top_row.addWidget(self.track_label)
+        top_row.addWidget(self.prev_button)
+        top_row.addWidget(self.play_button)
+        top_row.addWidget(self.next_button)
+        top_row.addWidget(self.playlist_button)
+        top_row.addWidget(self.restore_button)
+        container_layout.addLayout(top_row)
+        container_layout.addWidget(self.progress_slider)
         root.addWidget(self.container)
 
         self._playlist_panel = MiniPlaylistPanel(
@@ -320,11 +343,7 @@ class MiniPlayerBar(QDialog):
             parent=self,
         )
 
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(28)
-        shadow.setOffset(0, 6)
-        shadow.setColor(QColor(73, 22, 54, 90))
-        self.container.setGraphicsEffect(shadow)
+        self.container.setGraphicsEffect(None)
 
         self.setStyleSheet(
             """
@@ -333,36 +352,93 @@ class MiniPlayerBar(QDialog):
                 border: none;
             }
             QFrame#miniCard {
-                background: rgba(255, 247, 251, 0.95);
-                border: 2px solid #ffc2de;
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(255, 255, 255, 0.48),
+                    stop:0.45 rgba(255, 246, 252, 0.42),
+                    stop:1 rgba(255, 232, 245, 0.36)
+                );
+                border: none;
                 border-radius: 18px;
             }
             QLabel#miniTitle {
-                color: #6c2e4e;
-                font-size: 13px;
+                color: #6a2f4f;
+                font-size: 14px;
                 font-weight: 700;
-                padding: 4px 8px;
-                background: rgba(255, 239, 247, 0.72);
-                border-radius: 10px;
-            }
-            QPushButton#miniBtn {
-                min-width: 36px;
-                min-height: 32px;
-                border-radius: 10px;
-                color: #8d365d;
-                font-size: 16px;
-                border: 1px solid #ff9dc6;
+                padding: 2px 7px;
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #fff8fc,
-                    stop:1 #ffd4ea
+                    stop:0 rgba(255, 255, 255, 0.40),
+                    stop:1 rgba(255, 238, 248, 0.26)
                 );
+                border: none;
+                border-radius: 9px;
+            }
+            QPushButton#miniBtn {
+                min-width: 56px;
+                max-width: 56px;
+                min-height: 48px;
+                max-height: 48px;
+                border-radius: 14px;
+                color: #5d1f3f;
+                font-size: 24px;
+                border: none;
+                background: transparent;
+            }
+            QPushButton#miniBtn:hover {
+                background: rgba(255, 231, 246, 0.32);
             }
             QPushButton#miniBtn:pressed {
-                background: #ffcae4;
+                background: rgba(255, 208, 231, 0.52);
+                color: #4f1935;
+            }
+            QPushButton#miniBtn:disabled {
+                color: rgba(93, 31, 63, 0.35);
+                background: transparent;
+            }
+            QPushButton#miniBtnExpand {
+                min-width: 50px;
+                max-width: 50px;
+                min-height: 50px;
+                max-height: 50px;
+                border-radius: 14px;
+                color: #4f1935;
+                font-size: 25px;
+                border: none;
+                background: transparent;
+            }
+            QPushButton#miniBtnExpand:hover {
+                background: rgba(255, 231, 246, 0.35);
+            }
+            QPushButton#miniBtnExpand:pressed {
+                background: rgba(255, 208, 231, 0.56);
+            }
+            QSlider#miniProgressSlider::groove:horizontal {
+                height: 4px;
+                border-radius: 2px;
+                background: rgba(255, 207, 229, 0.44);
+            }
+            QSlider#miniProgressSlider::sub-page:horizontal {
+                border-radius: 2px;
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(255, 143, 190, 0.92),
+                    stop:1 rgba(255, 112, 171, 0.92)
+                );
+            }
+            QSlider#miniProgressSlider::handle:horizontal {
+                width: 10px;
+                margin: -4px 0;
+                border-radius: 5px;
+                border: none;
+                background: rgba(255, 247, 252, 0.96);
             }
             """
         )
+        self._progress_timer = QTimer(self)
+        self._progress_timer.setInterval(220)
+        self._progress_timer.timeout.connect(self._update_progress_ui)
+        self._progress_timer.start()
         self._restore_saved_position()
         self.set_keep_on_top(True)
 
@@ -381,7 +457,7 @@ class MiniPlayerBar(QDialog):
     def refresh_state(self) -> None:
         current = self._current_track_fn()
         if current is None:
-            label_text = "当前播放：-"
+            label_text = "-"
         else:
             info = self._extract_track_info_fn(current)
             label_text = f"{info.title} · {info.artist}"
@@ -389,20 +465,38 @@ class MiniPlayerBar(QDialog):
         self.play_button.setText("⏸" if self._is_playing_fn() else "▶")
         self.playlist_button.setEnabled(bool(self._list_tracks_fn()))
         self._update_compact_width(label_text)
+        self._update_progress_ui(force=True)
 
     def _update_compact_width(self, label_text: str) -> None:
-        metrics = QFontMetrics(self.track_label.font())
-        label_target = metrics.horizontalAdvance(label_text) + 22
-        control_width = 6 * 42  # 6 icon buttons
-        target_width = label_target + control_width + 56
+        _ = label_text  # keep signature stable
+        # Always keep mini player in the tightest compact layout.
+        compact_width = 430
         screen = QGuiApplication.primaryScreen()
-        max_width = 840
         if screen is not None:
-            max_width = max(420, screen.availableGeometry().width() - 36)
-        new_width = max(420, min(max_width, target_width))
-        if new_width != self.width():
-            self.resize(new_width, self.height())
-            self.track_label.setMinimumWidth(max(200, new_width - control_width - 86))
+            compact_width = min(compact_width, max(360, screen.availableGeometry().width() - 24))
+        if compact_width != self.width():
+            self.resize(compact_width, self.height())
+        self.track_label.setFixedWidth(78)
+
+    def _on_progress_pressed(self) -> None:
+        self._is_scrubbing = True
+
+    def _on_progress_released(self) -> None:
+        self._is_scrubbing = False
+        self._seek_position_ms_fn(int(self.progress_slider.value()))
+        self._update_progress_ui(force=True)
+
+    def _update_progress_ui(self, force: bool = False) -> None:
+        duration = max(0, int(self._get_duration_ms_fn()))
+        position = max(0, int(self._get_position_ms_fn()))
+        if duration <= 0:
+            self.progress_slider.setEnabled(False)
+            self.progress_slider.setRange(0, 0)
+            return
+        self.progress_slider.setEnabled(True)
+        self.progress_slider.setRange(0, duration)
+        if not self._is_scrubbing or force:
+            self.progress_slider.setValue(min(position, duration))
 
     def _show_playlist_menu(self) -> None:
         tracks = list(self._list_tracks_fn())
@@ -476,16 +570,24 @@ class MiniPlayerBar(QDialog):
 
     def hideEvent(self, event) -> None:
         self._playlist_panel.hide()
+        self._progress_timer.stop()
         super().hideEvent(event)
+
+    def showEvent(self, event) -> None:
+        if not self._progress_timer.isActive():
+            self._progress_timer.start()
+        super().showEvent(event)
 
 
 class MusicWindow(QDialog):
+    readyForPlayback = Signal()
     def __init__(
         self,
         icon_path: Path | None,
         playlist_bg_path: Path | None,
         list_tracks_fn,
         import_tracks_fn,
+        remove_track_fn,
         start_random_loop_fn,
         play_track_fn,
         play_next_fn,
@@ -493,6 +595,9 @@ class MusicWindow(QDialog):
         current_track_fn,
         toggle_play_pause_fn,
         is_playing_fn,
+        get_position_ms_fn,
+        get_duration_ms_fn,
+        seek_position_ms_fn,
         stop_playback_fn,
         parent=None,
     ) -> None:
@@ -501,6 +606,7 @@ class MusicWindow(QDialog):
         self._playlist_bg_path = playlist_bg_path
         self._list_tracks_fn = list_tracks_fn
         self._import_tracks_fn = import_tracks_fn
+        self._remove_track_fn = remove_track_fn
         self._start_random_loop_fn = start_random_loop_fn
         self._play_track_fn = play_track_fn
         self._play_next_fn = play_next_fn
@@ -508,12 +614,17 @@ class MusicWindow(QDialog):
         self._current_track_fn = current_track_fn
         self._toggle_play_pause_fn = toggle_play_pause_fn
         self._is_playing_fn = is_playing_fn
+        self._get_position_ms_fn = get_position_ms_fn
+        self._get_duration_ms_fn = get_duration_ms_fn
+        self._seek_position_ms_fn = seek_position_ms_fn
         self._stop_playback_fn = stop_playback_fn
         self._tracks: list[Path] = []
         self._track_infos: list[TrackInfo] = []
         self._mini_bar: MiniPlayerBar | None = None
         self._track_info_cache: dict[Path, tuple[int, int, TrackInfo]] = {}
         self._last_now_playing_key: tuple[str, bool] | None = None
+        self._is_scrubbing = False
+        self._ready_emitted = False
 
         self.setWindowTitle("飞行雪绒电台")
         self.setWindowFlags(
@@ -521,6 +632,7 @@ class MusicWindow(QDialog):
             | Qt.WindowType.WindowMinimizeButtonHint
             | Qt.WindowType.WindowCloseButtonHint
         )
+        self.setWindowOpacity(0.95)
         self.resize(390, 560)
         self._build_ui()
         self.refresh_tracks()
@@ -529,6 +641,14 @@ class MusicWindow(QDialog):
         self._refresh_timer.setInterval(2500)
         self._refresh_timer.timeout.connect(self._refresh_now_playing)
         self._refresh_timer.start()
+
+        self._progress_timer = QTimer(self)
+        self._progress_timer.setInterval(220)
+        self._progress_timer.timeout.connect(self._update_progress_ui)
+        self._progress_timer.start()
+
+    def is_ready_for_playback(self) -> bool:
+        return self._ready_emitted
 
     def _ensure_mini_bar(self) -> MiniPlayerBar:
         if self._mini_bar is None:
@@ -542,6 +662,9 @@ class MusicWindow(QDialog):
                 play_track_fn=self._play_track_fn,
                 extract_track_info_fn=self._extract_track_info,
                 is_playing_fn=self._is_playing_fn,
+                get_position_ms_fn=self._get_position_ms_fn,
+                get_duration_ms_fn=self._get_duration_ms_fn,
+                seek_position_ms_fn=self._seek_position_ms_fn,
             )
         return self._mini_bar
 
@@ -553,11 +676,13 @@ class MusicWindow(QDialog):
             mini.move_to_default_position()
         mini.show()
         mini.raise_()
+        self._sync_float_bar_button()
 
     def _hide_mini_bar(self) -> None:
         if self._mini_bar is not None:
             self._mini_bar.set_keep_on_top(False)
             self._mini_bar.hide()
+        self._sync_float_bar_button()
 
     def _restore_from_mini_bar(self) -> None:
         self.showNormal()
@@ -597,6 +722,11 @@ class MusicWindow(QDialog):
         title.setObjectName("navTitle")
         nav_layout.addWidget(avatar)
         nav_layout.addWidget(title, 1)
+        self.float_bar_button = QPushButton("⤡")
+        self.float_bar_button.setObjectName("navActionBtn")
+        self.float_bar_button.setToolTip("切换到迷你播放器")
+        self.float_bar_button.clicked.connect(self._toggle_mini_bar_from_ui)
+        nav_layout.addWidget(self.float_bar_button)
 
         panel = QFrame(self)
         panel.setObjectName("panelCard")
@@ -606,6 +736,25 @@ class MusicWindow(QDialog):
 
         self.now_playing = QLabel("当前播放：-")
         self.now_playing.setObjectName("nowPlaying")
+        self.now_playing.setTextFormat(Qt.TextFormat.RichText)
+        self.now_playing.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+        progress_row = QHBoxLayout()
+        progress_row.setSpacing(8)
+        self.current_time_label = QLabel("00:00")
+        self.current_time_label.setObjectName("timeLabel")
+        self.progress_slider = QSlider(Qt.Orientation.Horizontal)
+        self.progress_slider.setObjectName("progressSlider")
+        self.progress_slider.setRange(0, 0)
+        self.progress_slider.setEnabled(False)
+        self.progress_slider.sliderPressed.connect(self._on_progress_pressed)
+        self.progress_slider.sliderReleased.connect(self._on_progress_released)
+        self.progress_slider.valueChanged.connect(self._on_progress_value_changed)
+        self.total_time_label = QLabel("00:00")
+        self.total_time_label.setObjectName("timeLabel")
+        progress_row.addWidget(self.current_time_label)
+        progress_row.addWidget(self.progress_slider, 1)
+        progress_row.addWidget(self.total_time_label)
 
         self.track_list = PlaylistTreeWidget(self._playlist_bg_path, panel)
         self.track_list.setObjectName("trackList")
@@ -629,6 +778,10 @@ class MusicWindow(QDialog):
         self.import_button.setObjectName("actionBtn")
         self.import_button.setToolTip("导入曲库")
         self.import_button.clicked.connect(self._on_import_clicked)
+        self.remove_button = QPushButton("⌫")
+        self.remove_button.setObjectName("actionBtn")
+        self.remove_button.setToolTip("移除选中曲目")
+        self.remove_button.clicked.connect(self._on_remove_clicked)
         self.prev_button = QPushButton("⏮")
         self.prev_button.setObjectName("actionBtn")
         self.prev_button.setToolTip("上一首")
@@ -647,6 +800,7 @@ class MusicWindow(QDialog):
         self.random_button.clicked.connect(self._on_random_clicked)
 
         ctrl_row.addWidget(self.import_button)
+        ctrl_row.addWidget(self.remove_button)
         ctrl_row.addStretch(1)
         ctrl_row.addWidget(self.prev_button)
         ctrl_row.addWidget(self.play_button)
@@ -655,6 +809,7 @@ class MusicWindow(QDialog):
         ctrl_row.addWidget(self.random_button)
 
         panel_layout.addWidget(self.now_playing)
+        panel_layout.addLayout(progress_row)
         panel_layout.addWidget(self.track_list, 1)
         panel_layout.addLayout(ctrl_row)
 
@@ -665,12 +820,12 @@ class MusicWindow(QDialog):
 
         stylesheet = """
             QDialog {
-                background: #fff7fb;
+                background: rgba(255, 247, 251, 0.78);
                 color: #2a1f2a;
             }
             QFrame#navBar {
-                background: #ffffff;
-                border-bottom: 1px solid #ffd3e6;
+                background: rgba(255, 255, 255, 0.46);
+                border-bottom: 1px solid rgba(255, 211, 230, 0.36);
             }
             QLabel#avatarBadge {
                 min-width: 42px;
@@ -689,25 +844,80 @@ class MusicWindow(QDialog):
                 font-weight: 700;
                 color: #221626;
             }
-            QFrame#panelCard {
-                background: #fff7fb;
+            QPushButton#navActionBtn {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(255, 255, 255, 0.42),
+                    stop:1 rgba(255, 235, 247, 0.30)
+                );
                 border: none;
+                border-radius: 14px;
+                color: #7a3658;
+                min-width: 56px;
+                min-height: 48px;
+                padding: 4px 14px;
+                font-size: 26px;
+                font-weight: 600;
+            }
+            QPushButton#navActionBtn:hover {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(255, 255, 255, 0.98),
+                    stop:1 rgba(255, 227, 243, 0.95)
+                );
+            }
+            QPushButton#navActionBtn:pressed {
+                background: rgba(255, 211, 233, 0.38);
+            }
+            QFrame#panelCard {
+                background: rgba(255, 247, 251, 0.34);
+                border: none;
+                border-radius: 16px;
             }
             QLabel#nowPlaying {
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
-                    stop:0 rgba(255, 238, 247, 0.98),
-                    stop:1 rgba(255, 220, 237, 0.98)
+                    stop:0 rgba(255, 238, 247, 0.62),
+                    stop:1 rgba(255, 220, 237, 0.52)
                 );
-                border: 2px solid #ffb7d6;
+                border: none;
                 border-radius: 12px;
                 padding: 8px;
                 color: #6c2e4e;
                 font-size: 13px;
             }
+            QLabel#timeLabel {
+                color: #8a4a69;
+                min-width: 44px;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QSlider#progressSlider::groove:horizontal {
+                height: 6px;
+                border-radius: 3px;
+                background: rgba(255, 205, 228, 0.52);
+            }
+            QSlider#progressSlider::sub-page:horizontal {
+                border-radius: 3px;
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(255, 143, 190, 0.95),
+                    stop:1 rgba(255, 110, 170, 0.95)
+                );
+            }
+            QSlider#progressSlider::handle:horizontal {
+                width: 14px;
+                margin: -4px 0;
+                border-radius: 7px;
+                border: none;
+                background: rgba(255, 248, 252, 0.96);
+            }
+            QSlider#progressSlider::handle:horizontal:hover {
+                background: rgba(255, 255, 255, 0.98);
+            }
             QTreeWidget#trackList {
                 __TRACK_LIST_BACKGROUND__
-                border: 2px solid #ffd3e6;
+                border: none;
                 border-radius: 14px;
                 padding: 4px;
                 font-size: 14px;
@@ -724,9 +934,9 @@ class MusicWindow(QDialog):
                 color: #6c2e4e;
             }
             QHeaderView::section {
-                background: #fff0f7;
+                background: rgba(255, 240, 247, 0.58);
                 border: none;
-                border-bottom: 1px solid #ffd3e6;
+                border-bottom: 1px solid rgba(255, 211, 230, 0.34);
                 padding: 6px 8px;
                 color: #8d365d;
                 font-size: 12px;
@@ -735,72 +945,69 @@ class MusicWindow(QDialog):
             QPushButton#actionBtn {
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #fff8fc,
-                    stop:0.55 #ffdff0,
-                    stop:1 #ffc9e5
+                    stop:0 rgba(255, 255, 255, 0.34),
+                    stop:0.58 rgba(255, 239, 249, 0.28),
+                    stop:1 rgba(255, 217, 238, 0.24)
                 );
-                border: 2px solid #ff9dc6;
-                border-radius: 14px;
-                color: #8d365d;
+                border: none;
+                border-radius: 15px;
+                color: #7b3356;
                 min-width: 48px;
                 min-height: 40px;
                 padding: 4px;
-                font-size: 21px;
+                font-size: 20px;
                 font-weight: 600;
             }
             QPushButton#actionBtn:hover {
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #fffafd,
-                    stop:0.55 #ffe8f5,
-                    stop:1 #ffd5eb
+                    stop:0 rgba(255, 255, 255, 0.56),
+                    stop:0.55 rgba(255, 245, 251, 0.46),
+                    stop:1 rgba(255, 226, 243, 0.40)
                 );
             }
             QPushButton#actionBtn:pressed {
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #ffd2e8,
-                    stop:1 #ffb7d9
-                );
-                color: #7a2b4d;
+                background: rgba(255, 207, 231, 0.36);
+                color: #6f2d4d;
             }
             QPushButton#actionBtn:disabled {
-                background: #f2e4eb;
-                border: 2px solid #e6ccd8;
-                color: #b48ca3;
+                background: rgba(245, 237, 242, 0.18);
+                border: none;
+                color: #b995ab;
             }
             QPushButton#actionMainBtn {
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #ffe8f5,
-                    stop:1 #ffbfdf
+                    stop:0 rgba(255, 255, 255, 0.42),
+                    stop:0.5 rgba(255, 230, 245, 0.35),
+                    stop:1 rgba(255, 198, 227, 0.30)
                 );
-                border: 2px solid #ff8fbe;
-                border-radius: 22px;
-                color: #7a2b4d;
-                min-width: 44px;
-                max-width: 44px;
-                min-height: 44px;
-                max-height: 44px;
+                border: none;
+                border-radius: 24px;
+                color: #6f2a4a;
+                min-width: 48px;
+                max-width: 48px;
+                min-height: 48px;
+                max-height: 48px;
                 padding: 0px;
-                font-size: 22px;
+                font-size: 21px;
                 font-weight: 700;
             }
             QPushButton#actionMainBtn:hover {
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #fff0f9,
-                    stop:1 #ffcae5
+                    stop:0 rgba(255, 255, 255, 0.64),
+                    stop:1 rgba(255, 214, 238, 0.52)
                 );
             }
             QPushButton#actionMainBtn:pressed {
-                background: #ffb3d8;
-                color: #6f2544;
+                background: rgba(255, 185, 220, 0.42);
+                color: #662640;
             }
             QPushButton#actionMainBtn:disabled {
-                background: #f2e4eb;
-                border: 2px solid #e6ccd8;
-                color: #b48ca3;
+                background: rgba(245, 237, 242, 0.18);
+                border: none;
+                color: #b995ab;
             }
             """
         self.setStyleSheet(stylesheet.replace("__TRACK_LIST_BACKGROUND__", track_list_background))
@@ -824,6 +1031,29 @@ class MusicWindow(QDialog):
         self._import_tracks_fn()
         self.refresh_tracks()
 
+    def _on_remove_clicked(self) -> None:
+        item = self.track_list.currentItem()
+        if item is None:
+            QMessageBox.information(self, "未选择曲目", "请先在列表中选择要移除的歌曲。")
+            return
+        row = self.track_list.indexOfTopLevelItem(item)
+        if row < 0 or row >= len(self._track_infos):
+            return
+        target = self._track_infos[row]
+        confirm = QMessageBox.question(
+            self,
+            "移除曲目",
+            f"确认移除：\n{target.title}\n\n此操作会删除容器中的该音频文件。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        if not self._remove_track_fn(target.path):
+            QMessageBox.warning(self, "移除失败", "无法删除该曲目，请检查文件权限。")
+            return
+        self.refresh_tracks()
+
     def _on_random_clicked(self) -> None:
         self._start_random_loop_fn()
         self._refresh_now_playing()
@@ -833,6 +1063,56 @@ class MusicWindow(QDialog):
         self._toggle_play_pause_fn()
         self._refresh_now_playing()
         self._sync_play_button()
+
+    def _toggle_mini_bar_from_ui(self) -> None:
+        if self._mini_bar is not None and self._mini_bar.isVisible():
+            self._restore_from_mini_bar()
+            return
+        self._show_mini_bar()
+        # Apple Music-like mode switch: hide full player when mini player opens.
+        self.hide()
+
+    def _sync_float_bar_button(self) -> None:
+        is_visible = self._mini_bar is not None and self._mini_bar.isVisible()
+        self.float_bar_button.setText("⤢" if is_visible else "⤡")
+        self.float_bar_button.setToolTip("返回完整播放器" if is_visible else "切换到迷你播放器")
+
+    @staticmethod
+    def _format_ms(ms: int) -> str:
+        total = max(0, int(ms)) // 1000
+        minute = total // 60
+        second = total % 60
+        return f"{minute:02d}:{second:02d}"
+
+    def _on_progress_pressed(self) -> None:
+        self._is_scrubbing = True
+
+    def _on_progress_released(self) -> None:
+        self._is_scrubbing = False
+        self._seek_position_ms_fn(int(self.progress_slider.value()))
+        self._update_progress_ui(force=True)
+
+    def _on_progress_value_changed(self, value: int) -> None:
+        if self._is_scrubbing:
+            self.current_time_label.setText(self._format_ms(value))
+
+    def _update_progress_ui(self, force: bool = False) -> None:
+        duration = max(0, int(self._get_duration_ms_fn()))
+        position = max(0, int(self._get_position_ms_fn()))
+        if duration <= 0:
+            self.progress_slider.setEnabled(False)
+            self.progress_slider.setRange(0, 0)
+            if force or not self._is_scrubbing:
+                self.current_time_label.setText("00:00")
+            self.total_time_label.setText("00:00")
+            return
+
+        self.progress_slider.setEnabled(True)
+        self.progress_slider.setRange(0, duration)
+        self.total_time_label.setText(self._format_ms(duration))
+        if not self._is_scrubbing or force:
+            self.progress_slider.setValue(min(position, duration))
+            self.current_time_label.setText(self._format_ms(position))
 
     def refresh_tracks(self) -> None:
         self._tracks = list(self._list_tracks_fn())
@@ -875,7 +1155,7 @@ class MusicWindow(QDialog):
             return
         self._last_now_playing_key = now_playing_key
         if current is None:
-            self.now_playing.setText("当前播放：-")
+            self._set_now_playing_text(title="-", artist="-", album="-")
             self._sync_current_track_highlight()
             if self._mini_bar is not None:
                 self._mini_bar.refresh_state()
@@ -883,16 +1163,38 @@ class MusicWindow(QDialog):
             self._sync_play_button()
             return
         info = self._extract_track_info(current)
-        self.now_playing.setText(f"当前播放：{info.title}  ·  {info.artist}")
+        self._set_now_playing_text(title=info.title, artist=info.artist, album=info.album)
         self._sync_current_track_highlight()
         if self._mini_bar is not None:
             self._mini_bar.refresh_state()
         self._update_control_states()
         self._sync_play_button()
+        self._sync_float_bar_button()
+
+    def refresh_now_playing(self) -> None:
+        """
+        Fast-path refresh for external playback state changes.
+        """
+        self._refresh_now_playing()
+        self._update_progress_ui(force=True)
 
     def _sync_play_button(self) -> None:
         is_playing = bool(self._is_playing_fn())
         self.play_button.setText("⏸" if is_playing else "▶")
+
+    def _set_now_playing_text(self, title: str, artist: str, album: str) -> None:
+        title_html = html.escape((title or "-").strip() or "-")
+        artist_html = html.escape((artist or "-").strip() or "-")
+        album_html = html.escape((album or "-").strip() or "-")
+        self.now_playing.setText(
+            (
+                "<div style='line-height:1.08;'>"
+                f"<div style='font-size:19px; font-weight:800; color:#c13c83;'>{title_html}</div>"
+                f"<div style='margin-top:2px; font-size:13px; color:#ff5b9d;'>{artist_html}</div>"
+                f"<div style='margin-top:1px; font-size:12px; color:#b78da3;'>{album_html}</div>"
+                "</div>"
+            )
+        )
 
     def _sync_current_track_highlight(self) -> None:
         current = self._current_track_fn()
@@ -922,6 +1224,7 @@ class MusicWindow(QDialog):
     def _update_control_states(self) -> None:
         has_tracks = bool(self._track_infos)
         has_selected = self.track_list.currentItem() is not None
+        self.remove_button.setEnabled(has_selected)
         self.random_button.setEnabled(has_tracks)
         self.prev_button.setEnabled(has_tracks)
         self.next_button.setEnabled(has_tracks)
@@ -1004,24 +1307,35 @@ class MusicWindow(QDialog):
         return [token.strip() for token in normalized.split(",") if token.strip()]
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        self._progress_timer.stop()
         self._hide_mini_bar()
         self._stop_playback_fn()
         self._sync_play_button()
+        self._sync_float_bar_button()
         super().closeEvent(event)
+
+    def showEvent(self, event) -> None:
+        if not self._ready_emitted:
+            self._ready_emitted = True
+            self.readyForPlayback.emit()
+        super().showEvent(event)
 
     def changeEvent(self, event: QEvent) -> None:
         if event.type() == QEvent.Type.WindowStateChange:
             if self.isMinimized():
                 self._refresh_timer.stop()
-                self._show_mini_bar()
+                self._progress_timer.stop()
             else:
-                self._hide_mini_bar()
                 if not self._refresh_timer.isActive():
                     self._refresh_timer.start()
+                if not self._progress_timer.isActive():
+                    self._progress_timer.start()
                 self._refresh_now_playing()
+                self._update_progress_ui(force=True)
                 self._apply_column_widths()
                 self._update_control_states()
                 self._sync_play_button()
+            self._sync_float_bar_button()
         super().changeEvent(event)
 
     def resizeEvent(self, event) -> None:
