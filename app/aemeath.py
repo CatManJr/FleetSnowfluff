@@ -122,8 +122,12 @@ class Aemeath(QLabel):
             app_dir.mkdir(parents=True, exist_ok=True)
         except OSError:
             return
+        # Never migrate sensitive per-user secrets/history across app names.
+        blocked_filenames = {"settings.json", "chat_history.jsonl"}
         for src in legacy_dir.rglob("*"):
             rel = src.relative_to(legacy_dir)
+            if src.is_file() and src.name in blocked_filenames:
+                continue
             dst = app_dir / rel
             try:
                 if src.is_dir():
@@ -718,8 +722,20 @@ class Aemeath(QLabel):
 
     def _launch_hacker_terminal(self) -> None:
         start_dir = self.resources_dir.parent / "src"
+        if not start_dir.exists():
+            start_dir = Path.home()
         if sys.platform == "darwin":
-            subprocess.Popen(["open", "-a", "Terminal", str(start_dir)])
+            esc_dir = str(start_dir).replace("\\", "\\\\").replace('"', '\\"')
+            script = f'''
+            tell application "Terminal"
+                activate
+                do script "cd \\"{esc_dir}\\""
+            end tell
+            '''
+            try:
+                subprocess.Popen(["osascript", "-e", script])
+            except OSError:
+                subprocess.Popen(["open", "-a", "Terminal"])
             QTimer.singleShot(450, self._print_terminal_greeting)
             return
         if sys.platform.startswith("win"):

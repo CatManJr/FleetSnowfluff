@@ -132,6 +132,9 @@ if [[ ! -d "${APP_BUNDLE}" ]]; then
   exit 1
 fi
 
+echo "==> Sanitizing bundle (remove developer local data artifacts)"
+find "${APP_BUNDLE}" -type f \( -name "chat_history.jsonl" -o -name "settings.json" \) -delete || true
+
 echo "==> Packaging DMG"
 mkdir -p "${DMG_STAGE_DIR}"
 cp -R "${APP_BUNDLE}" "${DMG_STAGE_DIR}/"

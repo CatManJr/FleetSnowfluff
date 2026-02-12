@@ -13,6 +13,37 @@ from PySide6.QtWidgets import QApplication
 from app.aemeath import Aemeath
 
 
+def _resolve_resources_dir() -> Path:
+    """
+    Resolve resources path for both source-run and frozen app bundles.
+    """
+    candidates: list[Path] = []
+
+    if getattr(sys, "frozen", False):
+        # PyInstaller onefile/onedir may expose _MEIPASS.
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            candidates.append(Path(meipass) / "resources")
+
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates.extend(
+            [
+                exe_dir / "resources",
+                exe_dir.parent / "Resources" / "resources",
+            ]
+        )
+
+    # Source mode fallback.
+    src_root = Path(__file__).resolve().parent.parent
+    candidates.append(src_root / "resources")
+
+    for path in candidates:
+        if path.exists():
+            return path
+    # Return the first candidate for clearer downstream error context.
+    return candidates[0]
+
+
 def main() -> None:
     configure_qt_plugin_paths()
     app = QApplication(sys.argv)
@@ -20,8 +51,7 @@ def main() -> None:
     app.setApplicationDisplayName("Fleet Snowfluff")
     app.setQuitOnLastWindowClosed(False)
 
-    root = Path(__file__).resolve().parent.parent
-    resources_dir = root / "resources"
+    resources_dir = _resolve_resources_dir()
     icon_path = resources_dir / "icon.webp"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
