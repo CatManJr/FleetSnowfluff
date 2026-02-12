@@ -50,7 +50,7 @@ uv run main.py
 
 同样记得先准备 DeepSeek API Key，并在右键设置里填写。
 
-> ⚠️ ：虽然我尽可能做了容器隔离和uv隔离，但开发环境仍建议您做好备份与隔离防止我的屎山污染你的 Python 环境。
+> ⚠️ ：虽然我尽可能做了容器隔离和uv隔离，但开发环境仍建议您做好备份与隔离防止我的屎山污染您的 Python 环境。
 
 ## 功能总览 🎮
 
@@ -82,7 +82,7 @@ uv run main.py
 ## 功能演示 🎥
 
 <details>
-<summary>点击展开视频（如果你的平台支持）</summary>
+<summary>点击展开视频（如果您的平台支持）</summary>
 
 [![Demo Video 封面](https://img.shields.io/badge/点击此处播放演示视频-blue?logo=playstation)](https://github.com/CatManJr/FleetSnowfluff/blob/main/demo/demov0.1.4.mp4)
 
@@ -92,3 +92,5 @@ https://github.com/CatManJr/FleetSnowfluff/blob/main/demo/demov0.1.4.mp4
 
 ## 开发日志
 2-12-2026（UTC-5），测试版锐意完善中。
+可能提供 English Version（虽然我也不知道有什么意义）
+Windows 版待开发，或请您安装开发者版本后自行封包
