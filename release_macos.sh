@@ -45,6 +45,7 @@ DMG_PATH="${RELEASE_DIR}/${DMG_NAME}"
 ICON_OPT=()
 ICON_ICNS_PATH="${PROJECT_ROOT}/resources/icon.icns"
 ICON_WEBP_PATH="${PROJECT_ROOT}/resources/icon.webp"
+APP_SUPPORT_DIR="${HOME}/Library/Application Support"
 
 build_icns_from_source() {
   local source_image="$1"
@@ -96,6 +97,23 @@ PY
   rm -rf "${temp_dir}"
 }
 
+clean_developer_chat_history() {
+  local dirs=(
+    "${APP_SUPPORT_DIR}/FleetSnowfluff"
+    "${APP_SUPPORT_DIR}/Aemeath"
+  )
+  for data_dir in "${dirs[@]}"; do
+    if [[ -f "${data_dir}/chat_history.jsonl" ]]; then
+      rm -f "${data_dir}/chat_history.jsonl"
+      echo "   removed ${data_dir}/chat_history.jsonl"
+    fi
+    if [[ -f "${data_dir}/settings.json" ]]; then
+      rm -f "${data_dir}/settings.json"
+      echo "   removed ${data_dir}/settings.json (API key)"
+    fi
+  done
+}
+
 echo "==> Sync dependencies"
 cd "${SCRIPT_DIR}"
 uv sync
@@ -103,6 +121,9 @@ uv sync
 echo "==> Cleaning old artifacts"
 mkdir -p "${RELEASE_DIR}"
 rm -rf "${BUILD_DIR}" "${DMG_STAGE_DIR}" "${SCRIPT_DIR}/__pycache__" "${SCRIPT_DIR}"/*.spec "${DMG_PATH}" "${DIST_DIR}/${APP_NAME}.app"
+
+echo "==> Removing developer chat history"
+clean_developer_chat_history
 
 if [[ ! -f "${ICON_ICNS_PATH}" && -f "${ICON_WEBP_PATH}" ]]; then
   echo "==> Generating icon.icns from icon.webp"
