@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QCursor, QGuiApplication, QMouseEvent, QMovie, QPixmap, QTransform
@@ -93,9 +94,42 @@ class Aemeath(QLabel):
         if not prompt_path.exists():
             return ""
         try:
-            return prompt_path.read_text(encoding="utf-8").strip()
+            raw = prompt_path.read_text(encoding="utf-8").strip()
         except OSError:
             return ""
+        if not raw:
+            return ""
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            # Fallback for malformed config; keep token budget bounded.
+            return raw[:6000]
+        return self._build_structured_persona_prompt(data)
+
+    def _build_structured_persona_prompt(self, data: Any) -> str:
+        if not isinstance(data, dict):
+            return str(data)[:6000]
+
+        sections: list[tuple[str, Any]] = []
+        if "角色档案" in data:
+            sections.append(("角色档案", data.get("角色档案")))
+        if "行为准则" in data:
+            sections.append(("行为准则", data.get("行为准则")))
+        elif "行为约束与准则" in data:
+            sections.append(("行为准则", data.get("行为约束与准则")))
+        if "风格与语气" in data:
+            sections.append(("风格与语气", data.get("风格与语气")))
+
+        if not sections:
+            return json.dumps(data, ensure_ascii=False)[:6000]
+
+        parts: list[str] = []
+        for title, content in sections:
+            serialized = json.dumps(content, ensure_ascii=False, indent=2)[:2200]
+            parts.append(f"【{title}】\n{serialized}")
+
+        structured = "\n\n".join(parts)
+        return structured[:6000]
 
     def _resolve_config_path(self) -> Path:
         app_dir = self._app_data_dir("FleetSnowfluff")

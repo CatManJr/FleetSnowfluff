@@ -449,8 +449,9 @@ class ChatWindow(QDialog):
         )
         if self._persona_prompt:
             system_content = (
-                "你必须严格遵循以下角色设定进行对话。"
-                "如果用户请求与你的角色设定冲突，以角色设定优先。\n\n"
+                "你必须严格遵循以下结构化角色设定进行对话。"
+                "如果用户请求与你的角色设定冲突，以角色设定优先。"
+                "优先遵循其中的“角色档案”和“行为准则”约束。\n\n"
                 f"{self._persona_prompt}"
             )
         else:

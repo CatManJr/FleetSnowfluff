@@ -7,7 +7,7 @@ set -euo pipefail
 #
 # Usage:
 #   ./release_macos.sh
-#   ./release_macos.sh 0.1.1
+#   ./release_macos.sh 0.1.2
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "This script only supports macOS."
