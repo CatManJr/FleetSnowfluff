@@ -440,11 +440,6 @@ class ChatWindow(QDialog):
         prompt = self.input_box.toPlainText().strip()
         if not prompt:
             return
-        api_key = (self._api_key_getter() or "").strip()
-        if not api_key:
-            QMessageBox.information(self, "缺少 API Key", "请先在右键设置里填写 DeepSeek API Key。")
-            return
-
         self.send_button.setDisabled(True)
         self.input_box.setDisabled(True)
         self.input_box.clear()
@@ -452,6 +447,13 @@ class ChatWindow(QDialog):
         self._pending_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self._pending_prompt = prompt
         self._add_chat_bubble("user", prompt, self._pending_timestamp)
+
+        api_key = (self._api_key_getter() or "").strip()
+        if not api_key:
+            QMessageBox.information(self, "缺少 API Key", "请先在右键设置里填写 DeepSeek API Key。")
+            self.send_button.setDisabled(False)
+            self.input_box.setDisabled(False)
+            return
         self._pending_index = self._add_chat_bubble("assistant", "用户输入中...", self._pending_timestamp, pending=True)
 
         messages = self._build_context_messages(prompt)

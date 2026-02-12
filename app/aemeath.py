@@ -90,13 +90,24 @@ class Aemeath(QLabel):
         QTimer.singleShot(300, self._pin_topmost_once)
 
     def _load_persona_prompt(self) -> str:
-        prompt_path = self.resources_dir.parent / "src" / "config" / "FleetSnowfluff.json"
-        if not prompt_path.exists():
-            return ""
-        try:
-            raw = prompt_path.read_text(encoding="utf-8").strip()
-        except OSError:
-            return ""
+        candidates = [
+            # Packaged app path (preferred)
+            self.resources_dir / "config" / "FleetSnowfluff.json",
+            # Source-run path
+            self.resources_dir.parent / "src" / "config" / "FleetSnowfluff.json",
+            # Fallback for alternative layouts
+            self.resources_dir.parent / "config" / "FleetSnowfluff.json",
+        ]
+        raw = ""
+        for prompt_path in candidates:
+            if not prompt_path.exists():
+                continue
+            try:
+                raw = prompt_path.read_text(encoding="utf-8").strip()
+                if raw:
+                    break
+            except OSError:
+                continue
         if not raw:
             return ""
         try:
