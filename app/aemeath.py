@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, QUrl
+from PySide6.QtCore import QEvent, QPoint, QRect, QSettings, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QCursor, QGuiApplication, QMouseEvent, QMovie, QPixmap, QTransform
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import QApplication, QFileDialog, QLabel, QMenu, QMessageBox
@@ -53,12 +53,15 @@ class Aemeath(QLabel):
         self._chat_window: ChatWindow | None = None
         self._music_window: MusicWindow | None = None
         self._transform_window: TransformWindow | None = None
+        self._transform_restore_fullscreen_mode = False
         self._is_shutting_down = False
         self._persona_prompt = self._load_persona_prompt()
         self._playlist_order: list[Path] = []
         self._playlist_index: int = -1
         self._pending_autoplay_music = False
+        self._resume_music_after_transform = False
         self._supported_music_exts = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
+        self._runtime_settings = QSettings("FleetSnowfluff", "Aemeath")
 
         self._movies = {}
         self._load_movies()
@@ -95,6 +98,9 @@ class Aemeath(QLabel):
         self._ensure_resource_container()
         self._setup_audio()
         self._setup_menu()
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
         # Keep it simple: pin topmost once at startup, no runtime stack polling.
         QTimer.singleShot(0, self._pin_topmost_once)
         QTimer.singleShot(300, self._pin_topmost_once)
@@ -541,10 +547,21 @@ class Aemeath(QLabel):
 
     def _setup_audio(self) -> None:
         self._audio_output = QAudioOutput(self)
-        self._audio_output.setVolume(0.7)
+        self._audio_output.setVolume(self._load_music_volume_percent() / 100.0)
         self._player = QMediaPlayer(self)
         self._player.setAudioOutput(self._audio_output)
         self._player.mediaStatusChanged.connect(self._on_media_status_changed)
+
+    def _load_music_volume_percent(self) -> int:
+        raw = self._runtime_settings.value("audio/music_volume_percent", 70)
+        try:
+            volume = int(raw)
+        except (TypeError, ValueError):
+            volume = 70
+        return max(0, min(100, volume))
+
+    def _persist_music_volume_percent(self, volume_percent: int) -> None:
+        self._runtime_settings.setValue("audio/music_volume_percent", max(0, min(100, int(volume_percent))))
 
     def _setup_menu(self) -> None:
         self._menu = QMenu(self)
@@ -804,33 +821,55 @@ class Aemeath(QLabel):
         self._chat_window = None
 
     def _transform_emis(self) -> None:
-        # Prefer alpha-capable transform source first.
-        candidates = [
-            self.resources_dir / "aemeath.mov",
-            self.resources_dir / "human.mov",
-            self.resources_dir / "human.mp4",
-        ]
-        video_path = next((p for p in candidates if p.exists()), candidates[-1])
+        # Prefer awaiting desktop-scene transform clip when available.
+        awaiting_path = self.resources_dir / "awaiting.mov"
+        use_desktop_scene_mode = awaiting_path.exists()
+
+        if use_desktop_scene_mode:
+            video_path = awaiting_path
+        else:
+            # Fallback to previous alpha-capable transform source chain.
+            candidates = [
+                self.resources_dir / "aemeath.mov",
+                self.resources_dir / "human.mov",
+                self.resources_dir / "human.mp4",
+            ]
+            video_path = next((p for p in candidates if p.exists()), candidates[-1])
         if not video_path.exists():
-            QMessageBox.warning(self, "资源缺失", f"未找到变身播片：{video_path.name}")
+            QMessageBox.warning(self, "变身播片失败", "⚠️Waring：虚质磁暴影响，通讯受阻")
             return
         if not self._is_widget_alive(self._transform_window):
             self._transform_window = TransformWindow(parent=None)
             self._transform_window.playbackFinished.connect(self._on_transform_playback_finished)
             self._transform_window.playbackFailed.connect(self._on_transform_playback_failed)
         self._stop_flight()
-        target_geometry = self.frameGeometry()
-        scaled_w = max(1, int(target_geometry.width() * 1.5))
-        scaled_h = max(1, int(target_geometry.height() * 1.5))
-        center = target_geometry.center()
-        target_geometry = QRect(
-            center.x() - scaled_w // 2,
-            center.y() - scaled_h // 2,
-            scaled_w,
-            scaled_h,
-        )
+        if use_desktop_scene_mode:
+            screen = QGuiApplication.primaryScreen()
+            if screen is None:
+                target_geometry = self.frameGeometry()
+            else:
+                # Use full screen geometry so top letterbox can hide behind macOS menu bar.
+                target_geometry = screen.geometry()
+            self._transform_restore_fullscreen_mode = True
+        else:
+            target_geometry = self.frameGeometry()
+            scaled_w = max(1, int(target_geometry.width() * 1.5))
+            scaled_h = max(1, int(target_geometry.height() * 1.5))
+            center = target_geometry.center()
+            target_geometry = QRect(
+                center.x() - scaled_w // 2,
+                center.y() - scaled_h // 2,
+                scaled_w,
+                scaled_h,
+            )
+            self._transform_restore_fullscreen_mode = False
+        self._pause_music_for_transform()
         self.hide()
-        self._transform_window.play_media(video_path, target_geometry)
+        self._transform_window.play_media(
+            video_path,
+            target_geometry,
+            desktop_scene_mode=use_desktop_scene_mode,
+        )
 
     def _on_transform_window_destroyed(self) -> None:
         self._transform_window = None
@@ -838,22 +877,39 @@ class Aemeath(QLabel):
     def _on_transform_playback_finished(self) -> None:
         if self._is_shutting_down:
             return
+        self._transform_restore_fullscreen_mode = False
         self.show()
         self.raise_()
         self.activateWindow()
+        self._resume_music_after_transform_if_needed()
         if not self._is_hovering:
             self._set_movie(random.choice(self.idle_ids))
 
     def _on_transform_playback_failed(self, error_text: str) -> None:
         if self._is_shutting_down:
             return
+        self._transform_restore_fullscreen_mode = False
         QMessageBox.warning(
             self,
             "变身播片失败",
-            "当前视频编码可能与系统解码器不兼容。\n"
-            "建议优先使用带 alpha 的 human.mov，或将 human.mp4 转码为 H.264/AAC 后重试。\n"
-            f"详情：{error_text}",
+            "⚠️Waring：虚质磁暴影响，通讯受阻",
         )
+
+    def _pause_music_for_transform(self) -> None:
+        self._resume_music_after_transform = self._is_music_playing()
+        if self._resume_music_after_transform:
+            self._player.pause()
+            if self._is_widget_alive(self._music_window):
+                self._music_window.refresh_now_playing()
+
+    def _resume_music_after_transform_if_needed(self) -> None:
+        if not self._resume_music_after_transform:
+            return
+        self._resume_music_after_transform = False
+        if not self._player.source().isEmpty():
+            self._player.play()
+            if self._is_widget_alive(self._music_window):
+                self._music_window.refresh_now_playing()
 
     def _launch_hacker_terminal(self) -> None:
         if sys.platform == "darwin":
@@ -1013,6 +1069,14 @@ class Aemeath(QLabel):
         clamped = max(0, min(int(position_ms), duration))
         self._player.setPosition(clamped)
 
+    def _music_volume_percent(self) -> int:
+        return max(0, min(100, int(round(self._audio_output.volume() * 100))))
+
+    def _set_music_volume_percent(self, volume_percent: int) -> None:
+        clamped = max(0, min(int(volume_percent), 100))
+        self._audio_output.setVolume(clamped / 100.0)
+        self._persist_music_volume_percent(clamped)
+
     def _on_media_status_changed(self, status) -> None:
         if status == QMediaPlayer.MediaStatus.EndOfMedia:
             self._play_next_track()
@@ -1107,6 +1171,8 @@ class Aemeath(QLabel):
                 get_position_ms_fn=self._music_position_ms,
                 get_duration_ms_fn=self._music_duration_ms,
                 seek_position_ms_fn=self._seek_music_ms,
+                get_volume_percent_fn=self._music_volume_percent,
+                set_volume_percent_fn=self._set_music_volume_percent,
                 stop_playback_fn=self._stop_music_playback,
                 parent=None,
             )
@@ -1150,6 +1216,14 @@ class Aemeath(QLabel):
             self.idle_switch_timer.stop()
         self._stop_flight()
         super().closeEvent(event)
+
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
+            if self._is_widget_alive(self._transform_window) and self._transform_window.isVisible():
+                self._transform_window.close()
+                event.accept()
+                return True
+        return super().eventFilter(watched, event)
 
     def enterEvent(self, event) -> None:
         self._is_hovering = True

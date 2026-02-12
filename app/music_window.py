@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
 
@@ -598,6 +599,8 @@ class MusicWindow(QDialog):
         get_position_ms_fn,
         get_duration_ms_fn,
         seek_position_ms_fn,
+        get_volume_percent_fn,
+        set_volume_percent_fn,
         stop_playback_fn,
         parent=None,
     ) -> None:
@@ -617,6 +620,8 @@ class MusicWindow(QDialog):
         self._get_position_ms_fn = get_position_ms_fn
         self._get_duration_ms_fn = get_duration_ms_fn
         self._seek_position_ms_fn = seek_position_ms_fn
+        self._get_volume_percent_fn = get_volume_percent_fn
+        self._set_volume_percent_fn = set_volume_percent_fn
         self._stop_playback_fn = stop_playback_fn
         self._tracks: list[Path] = []
         self._track_infos: list[TrackInfo] = []
@@ -625,6 +630,7 @@ class MusicWindow(QDialog):
         self._last_now_playing_key: tuple[str, bool] | None = None
         self._is_scrubbing = False
         self._ready_emitted = False
+        self._pending_enter_mini_mode = False
 
         self.setWindowTitle("飞行雪绒电台")
         self.setWindowFlags(
@@ -685,6 +691,8 @@ class MusicWindow(QDialog):
         self._sync_float_bar_button()
 
     def _restore_from_mini_bar(self) -> None:
+        if self.volume_popup.isVisible():
+            self.volume_popup.hide()
         self.showNormal()
         self.raise_()
         self.activateWindow()
@@ -755,6 +763,30 @@ class MusicWindow(QDialog):
         progress_row.addWidget(self.current_time_label)
         progress_row.addWidget(self.progress_slider, 1)
         progress_row.addWidget(self.total_time_label)
+        self.volume_button = QPushButton("🔊")
+        self.volume_button.setObjectName("volumeToggleBtn")
+        self.volume_button.setToolTip("音量")
+        self.volume_button.clicked.connect(self._toggle_volume_popup)
+        progress_row.addWidget(self.volume_button)
+
+        self.volume_popup = QWidget(self)
+        self.volume_popup.setObjectName("volumePopup")
+        self.volume_popup.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        popup_layout = QVBoxLayout(self.volume_popup)
+        popup_layout.setContentsMargins(8, 8, 8, 8)
+        popup_layout.setSpacing(6)
+        self.volume_popup_value = QLabel("70%")
+        self.volume_popup_value.setObjectName("volumePopupValue")
+        self.volume_popup_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.volume_popup_slider = QSlider(Qt.Orientation.Vertical)
+        self.volume_popup_slider.setObjectName("volumePopupSlider")
+        self.volume_popup_slider.setRange(0, 100)
+        self.volume_popup_slider.setInvertedAppearance(False)
+        self.volume_popup_slider.valueChanged.connect(self._on_volume_changed)
+        popup_layout.addWidget(self.volume_popup_value)
+        popup_layout.addWidget(self.volume_popup_slider, 1)
+        self.volume_popup.resize(54, 170)
+        self._sync_volume_ui(max(0, min(100, int(self._get_volume_percent_fn()))))
 
         self.track_list = PlaylistTreeWidget(self._playlist_bg_path, panel)
         self.track_list.setObjectName("trackList")
@@ -915,6 +947,57 @@ class MusicWindow(QDialog):
             QSlider#progressSlider::handle:horizontal:hover {
                 background: rgba(255, 255, 255, 0.98);
             }
+            QPushButton#volumeToggleBtn {
+                min-width: 34px;
+                max-width: 34px;
+                min-height: 28px;
+                max-height: 28px;
+                border-radius: 10px;
+                border: none;
+                background: rgba(255, 255, 255, 0.36);
+                color: #7a3658;
+                font-size: 16px;
+                font-weight: 700;
+            }
+            QPushButton#volumeToggleBtn:hover {
+                background: rgba(255, 255, 255, 0.56);
+            }
+            QPushButton#volumeToggleBtn:pressed {
+                background: rgba(255, 220, 239, 0.64);
+            }
+            QWidget#volumePopup {
+                background: rgba(255, 247, 251, 0.96);
+                border: 1px solid rgba(255, 197, 224, 0.85);
+                border-radius: 12px;
+            }
+            QLabel#volumePopupValue {
+                color: #8d365d;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            QSlider#volumePopupSlider::groove:vertical {
+                width: 8px;
+                border-radius: 4px;
+                background: rgba(255, 221, 238, 0.52);
+            }
+            QSlider#volumePopupSlider::sub-page:vertical {
+                border-radius: 4px;
+                background: qlineargradient(
+                    x1:0, y1:1, x2:0, y2:0,
+                    stop:0 rgba(255, 153, 197, 0.96),
+                    stop:1 rgba(255, 119, 176, 0.96)
+                );
+            }
+            QSlider#volumePopupSlider::handle:vertical {
+                height: 14px;
+                margin: 0 -4px;
+                border-radius: 7px;
+                border: none;
+                background: rgba(255, 248, 252, 0.98);
+            }
+            QSlider#volumePopupSlider::handle:vertical:hover {
+                background: rgba(255, 255, 255, 1.0);
+            }
             QTreeWidget#trackList {
                 __TRACK_LIST_BACKGROUND__
                 border: none;
@@ -1068,7 +1151,30 @@ class MusicWindow(QDialog):
         if self._mini_bar is not None and self._mini_bar.isVisible():
             self._restore_from_mini_bar()
             return
+        if self.volume_popup.isVisible():
+            self.volume_popup.hide()
+        if self.isFullScreen():
+            self._pending_enter_mini_mode = True
+            self.showNormal()
+            QTimer.singleShot(0, self._enter_mini_mode_after_fullscreen)
+            return
+        self._enter_mini_mode_after_fullscreen()
+
+    def _enter_mini_mode_after_fullscreen(self) -> None:
+        if self.isFullScreen():
+            QTimer.singleShot(40, self._enter_mini_mode_after_fullscreen)
+            return
+        self._pending_enter_mini_mode = False
         self._show_mini_bar()
+        self._hide_main_window_for_mini_mode()
+
+    def _hide_main_window_for_mini_mode(self) -> None:
+        # On macOS, hiding immediately after exiting fullscreen can leave
+        # a ghost/blank frame. Minimize first, then hide on next tick.
+        if sys.platform == "darwin":
+            self.showMinimized()
+            QTimer.singleShot(90, self.hide)
+            return
         # Apple Music-like mode switch: hide full player when mini player opens.
         self.hide()
 
@@ -1095,6 +1201,35 @@ class MusicWindow(QDialog):
     def _on_progress_value_changed(self, value: int) -> None:
         if self._is_scrubbing:
             self.current_time_label.setText(self._format_ms(value))
+
+    def _on_volume_changed(self, value: int) -> None:
+        clamped = max(0, min(100, int(value)))
+        self._sync_volume_ui(clamped)
+        self._set_volume_percent_fn(clamped)
+
+    def _sync_volume_ui(self, volume_percent: int) -> None:
+        clamped = max(0, min(100, int(volume_percent)))
+        with QSignalBlocker(self.volume_popup_slider):
+            self.volume_popup_slider.setValue(clamped)
+        self.volume_popup_value.setText(f"{clamped}%")
+        if clamped == 0:
+            self.volume_button.setText("🔇")
+        elif clamped < 45:
+            self.volume_button.setText("🔉")
+        else:
+            self.volume_button.setText("🔊")
+
+    def _toggle_volume_popup(self) -> None:
+        if self.volume_popup.isVisible():
+            self.volume_popup.hide()
+            return
+        self._sync_volume_ui(self._get_volume_percent_fn())
+        anchor = self.volume_button.mapToGlobal(QPoint(0, 0))
+        x = anchor.x() + (self.volume_button.width() - self.volume_popup.width()) // 2
+        y = anchor.y() - self.volume_popup.height() - 6
+        self.volume_popup.move(x, y)
+        self.volume_popup.show()
+        self.volume_popup.raise_()
 
     def _update_progress_ui(self, force: bool = False) -> None:
         duration = max(0, int(self._get_duration_ms_fn()))
@@ -1308,6 +1443,9 @@ class MusicWindow(QDialog):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._progress_timer.stop()
+        self._pending_enter_mini_mode = False
+        if self.volume_popup.isVisible():
+            self.volume_popup.hide()
         self._hide_mini_bar()
         self._stop_playback_fn()
         self._sync_play_button()
@@ -1323,6 +1461,8 @@ class MusicWindow(QDialog):
     def changeEvent(self, event: QEvent) -> None:
         if event.type() == QEvent.Type.WindowStateChange:
             if self.isMinimized():
+                if self.volume_popup.isVisible():
+                    self.volume_popup.hide()
                 self._refresh_timer.stop()
                 self._progress_timer.stop()
             else:

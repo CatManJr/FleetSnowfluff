@@ -95,7 +95,8 @@ https://github.com/CatManJr/FleetSnowfluff/blob/main/demo/demov0.1.4.mp4
 </details>
 
 ## 开发日志
-2-11-2026（UTC-5）：测试版锐意完善中。
-可能提供 English Version（虽然我也不知道有什么意义）
-Windows 版待开发，或请您安装开发者版本后自行封包
-2-12-2026（UTC-5）：优化飞行雪绒电台UI及交互设计，v0.1.5beta release
+2-11-2026（UTC-5）：测试版锐意完善中。  
+可能提供 English Version（虽然我也不知道有什么意义）  
+Windows 版待开发，或请您安装开发者版本后自行封包  
+2-12-2026（UTC-5）：优化飞行雪绒电台UI及交互设计，v0.1.5beta release  
+2-12-2026（UTC-5）：播片堆料完成。优化飞行雪绒电台功能和交互设计。v1.0.0正式版发布。

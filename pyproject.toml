@@ -1,6 +1,6 @@
 [project]
 name = "FleetSnowfluff"
-version = "0.1.4"
+version = "v1.0.0"
 description = "Aemeath on your desktop."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -8,7 +8,6 @@ dependencies = [
     "mutagen>=1.47.0",
     "openai>=2.20.0",
     "openapi>=2.0.0",
-    "opencv-python-headless>=4.13.0.92",
     "pyinstaller>=6.18.0",
     "pyside6>=6.10.2",
 ]
