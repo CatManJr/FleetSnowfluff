@@ -270,7 +270,6 @@ class ChatWindow(QDialog):
                 color: #8d365d;
                 padding: 4px 8px;
                 font-size: 17px;
-                font-family: Menlo, Monaco, "SF Mono";
             }
             QFrame#panelCard {
                 background: #fff7fb;
@@ -291,7 +290,6 @@ class ChatWindow(QDialog):
                 border-radius: 16px;
                 padding: 8px;
                 color: #2a1f2a;
-                font-family: Menlo, Monaco, "SF Mono";
                 font-size: 18px;
             }
             QPushButton#sendButton {
@@ -305,7 +303,6 @@ class ChatWindow(QDialog):
                 border-radius: 16px;
                 color: #ffffff;
                 font-weight: 600;
-                font-family: Menlo, Monaco, "SF Mono";
                 font-size: 16px;
             }
             QPushButton:disabled {
@@ -347,7 +344,7 @@ class ChatWindow(QDialog):
         body.setWordWrap(True)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         body.setStyleSheet(
-            'font-family: Menlo, Monaco, "SF Mono"; font-size: 16px; '
+            "font-size: 16px; "
             "background: transparent; border: none; margin: 0; padding: 0;"
         )
 

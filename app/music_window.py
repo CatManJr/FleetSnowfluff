@@ -180,7 +180,6 @@ class MiniPlaylistPanel(QDialog):
                 padding: 6px 8px;
                 background: #fff8fc;
                 color: #6c2e4e;
-                font-family: Menlo, Monaco, "SF Mono";
                 font-size: 12px;
             }
             QListWidget#playlistList {
@@ -188,7 +187,6 @@ class MiniPlaylistPanel(QDialog):
                 border-radius: 10px;
                 background: #ffffff;
                 color: #2a1f2a;
-                font-family: Menlo, Monaco, "SF Mono";
                 font-size: 12px;
                 padding: 3px;
             }
@@ -341,7 +339,6 @@ class MiniPlayerBar(QDialog):
             }
             QLabel#miniTitle {
                 color: #6c2e4e;
-                font-family: Menlo, Monaco, "SF Mono";
                 font-size: 13px;
                 font-weight: 700;
                 padding: 4px 8px;
@@ -706,7 +703,6 @@ class MusicWindow(QDialog):
                 border-radius: 12px;
                 padding: 8px;
                 color: #6c2e4e;
-                font-family: Menlo, Monaco, "SF Mono";
                 font-size: 13px;
             }
             QTreeWidget#trackList {
@@ -714,7 +710,6 @@ class MusicWindow(QDialog):
                 border: 2px solid #ffd3e6;
                 border-radius: 14px;
                 padding: 4px;
-                font-family: Menlo, Monaco, "SF Mono";
                 font-size: 14px;
                 color: #2a1f2a;
             }
@@ -734,7 +729,6 @@ class MusicWindow(QDialog):
                 border-bottom: 1px solid #ffd3e6;
                 padding: 6px 8px;
                 color: #8d365d;
-                font-family: Menlo, Monaco, "SF Mono";
                 font-size: 12px;
                 font-weight: 700;
             }
@@ -751,7 +745,6 @@ class MusicWindow(QDialog):
                 min-width: 48px;
                 min-height: 40px;
                 padding: 4px;
-                font-family: Menlo, Monaco, "SF Mono";
                 font-size: 21px;
                 font-weight: 600;
             }
@@ -790,7 +783,6 @@ class MusicWindow(QDialog):
                 min-height: 44px;
                 max-height: 44px;
                 padding: 0px;
-                font-family: Menlo, Monaco, "SF Mono";
                 font-size: 22px;
                 font-weight: 700;
             }
@@ -846,7 +838,7 @@ class MusicWindow(QDialog):
         self._tracks = list(self._list_tracks_fn())
         self.track_list.clear()
         self._track_infos = [self._extract_track_info(p) for p in self._tracks]
-        title_font = QFont("Menlo")
+        title_font = QFont()
         title_font.setBold(True)
         title_font.setPointSize(16)
         for info in self._track_infos:

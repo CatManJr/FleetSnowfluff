@@ -19,6 +19,7 @@ from .chat_window import ChatWindow
 from .music_window import MusicWindow
 from .seal_widget import SealWidget
 from .settings_dialog import SettingsDialog
+from .transform_window import TransformWindow
 
 
 class Aemeath(QLabel):
@@ -46,6 +47,8 @@ class Aemeath(QLabel):
         self._last_fullscreen_checked_at = 0.0
         self._chat_window: ChatWindow | None = None
         self._music_window: MusicWindow | None = None
+        self._transform_window: TransformWindow | None = None
+        self._is_shutting_down = False
         self._persona_prompt = self._load_persona_prompt()
         self._playlist_order: list[Path] = []
         self._playlist_index: int = -1
@@ -479,11 +482,24 @@ class Aemeath(QLabel):
     def _seal_closed(self, seal_widget: SealWidget) -> None:
         if seal_widget in self._seal_widgets:
             self._seal_widgets.remove(seal_widget)
+        self._sync_seal_state()
+        self._refresh_menu_labels()
+
+    def _sync_seal_state(self) -> None:
+        alive: list[SealWidget] = []
+        for seal in self._seal_widgets:
+            try:
+                _ = seal.isVisible()
+            except RuntimeError:
+                continue
+            alive.append(seal)
+        self._seal_widgets = alive
 
     def _clear_seals(self) -> None:
         for seal in list(self._seal_widgets):
             seal.close()
         self._seal_widgets.clear()
+        self._refresh_menu_labels()
 
     def _spawn_seals(self, count: int) -> None:
         screen = QGuiApplication.primaryScreen()
@@ -522,7 +538,6 @@ class Aemeath(QLabel):
                 margin: 2px 0;
                 color: #6c2e4e;
                 background: transparent;
-                font-family: Menlo, Monaco, "SF Mono";
                 font-size: 12px;
             }
             QMenu::item:selected {
@@ -535,12 +550,12 @@ class Aemeath(QLabel):
             }
             """
         )
-        self._chat_action = self._menu.addAction("飞讯")
+        self._chat_action = self._menu.addAction("打开飞讯")
         self._transform_action = self._menu.addAction("爱弥斯，变身！")
-        self._hacker_action = self._menu.addAction("黑客爱弥斯！")
+        self._hacker_action = self._menu.addAction("电子幽灵登场！")
         self._seal_action = self._menu.addAction("")
         self._music_action = self._menu.addAction("你看，又唱")
-        self._exit_action = self._menu.addAction("拜拜～爱弥斯")
+        self._exit_action = self._menu.addAction("拜拜～")
 
         self._chat_action.triggered.connect(self._chat_with_xiaoai)
         self._transform_action.triggered.connect(self._transform_emis)
@@ -741,6 +756,7 @@ class Aemeath(QLabel):
         return result.stdout.strip()
 
     def _refresh_menu_labels(self) -> None:
+        self._sync_seal_state()
         self._seal_action.setText("拜拜海豹" if self._seal_widgets else "召唤雪绒海豹")
 
     def _show_menu(self, global_pos: QPoint) -> None:
@@ -765,10 +781,56 @@ class Aemeath(QLabel):
         self._chat_window = None
 
     def _transform_emis(self) -> None:
-        QMessageBox.information(
+        # Prefer alpha-capable transform source first.
+        candidates = [
+            self.resources_dir / "aemeath.mov",
+            self.resources_dir / "human.mov",
+            self.resources_dir / "human.mp4",
+        ]
+        video_path = next((p for p in candidates if p.exists()), candidates[-1])
+        if not video_path.exists():
+            QMessageBox.warning(self, "资源缺失", f"未找到变身播片：{video_path.name}")
+            return
+        if self._transform_window is None:
+            self._transform_window = TransformWindow(parent=None)
+            self._transform_window.destroyed.connect(self._on_transform_window_destroyed)
+            self._transform_window.playbackFinished.connect(self._on_transform_playback_finished)
+            self._transform_window.playbackFailed.connect(self._on_transform_playback_failed)
+        self._stop_flight()
+        target_geometry = self.frameGeometry()
+        scaled_w = max(1, int(target_geometry.width() * 1.5))
+        scaled_h = max(1, int(target_geometry.height() * 1.5))
+        center = target_geometry.center()
+        target_geometry = QRect(
+            center.x() - scaled_w // 2,
+            center.y() - scaled_h // 2,
+            scaled_w,
+            scaled_h,
+        )
+        self.hide()
+        self._transform_window.play_media(video_path, target_geometry)
+
+    def _on_transform_window_destroyed(self) -> None:
+        self._transform_window = None
+
+    def _on_transform_playback_finished(self) -> None:
+        if self._is_shutting_down:
+            return
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        if not self._is_hovering:
+            self._set_movie(random.choice(self.idle_ids))
+
+    def _on_transform_playback_failed(self, error_text: str) -> None:
+        if self._is_shutting_down:
+            return
+        QMessageBox.warning(
             self,
-            "待实现",
-            "“爱弥斯，变身！”待你制作正常形态动画后接入。",
+            "变身播片失败",
+            "当前视频编码可能与系统解码器不兼容。\n"
+            "建议优先使用带 alpha 的 human.mov，或将 human.mp4 转码为 H.264/AAC 后重试。\n"
+            f"详情：{error_text}",
         )
 
     def _launch_hacker_terminal(self) -> None:
@@ -803,10 +865,12 @@ class Aemeath(QLabel):
             QMessageBox.warning(self, "启动失败", "未找到可用终端，请手动启动 terminal。")
 
     def _toggle_seals(self) -> None:
+        self._sync_seal_state()
         if self._seal_widgets:
             self._clear_seals()
             return
-        self._spawn_seals(random.randint(1, 6))
+        self._spawn_seals(random.randint(1, 12))
+        self._refresh_menu_labels()
 
     def _play_random_music(self) -> None:
         self._open_music_window()
@@ -969,12 +1033,28 @@ class Aemeath(QLabel):
         self._music_window = None
 
     def _quit_app(self) -> None:
+        self._is_shutting_down = True
         self._stop_flight()
+        if self.idle_switch_timer.isActive():
+            self.idle_switch_timer.stop()
+        if self._transform_window is not None:
+            self._transform_window.close()
+        if self._chat_window is not None:
+            self._chat_window.close()
+        if self._music_window is not None:
+            self._music_window.close()
         self._clear_seals()
         self.close()
         app = QApplication.instance()
         if app is not None:
             app.quit()
+
+    def closeEvent(self, event) -> None:
+        self._is_shutting_down = True
+        if self.idle_switch_timer.isActive():
+            self.idle_switch_timer.stop()
+        self._stop_flight()
+        super().closeEvent(event)
 
     def enterEvent(self, event) -> None:
         self._is_hovering = True

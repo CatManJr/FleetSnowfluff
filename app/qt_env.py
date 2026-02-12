@@ -6,7 +6,16 @@ from pathlib import Path
 
 
 def bootstrap_qt_plugin_paths() -> None:
-    os.environ.setdefault("QT_LOGGING_RULES", "*.debug=false;qt.multimedia.ffmpeg=false")
+    # Force deterministic low-noise runtime logs for end users.
+    os.environ["QT_FFMPEG_DEBUG"] = "0"
+    os.environ["QT_LOGGING_RULES"] = (
+        "*.debug=false;"
+        "*.ffmpeg.*=false;"
+        "*.multimedia.*=false;"
+        "qt.multimedia.ffmpeg=false;"
+        "qt.multimedia.playbackengine.*=false;"
+        "qt.multimedia.integration.*=false"
+    )
     for raw_path in sys.path:
         if not raw_path:
             continue
