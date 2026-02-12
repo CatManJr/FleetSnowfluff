@@ -108,28 +108,34 @@ class Aemeath(QLabel):
 
     def _build_structured_persona_prompt(self, data: Any) -> str:
         if not isinstance(data, dict):
-            return str(data)[:6000]
+            return str(data)[:12000]
 
-        sections: list[tuple[str, Any]] = []
+        sections: list[tuple[str, Any, int]] = []
+        if "行为约束与准则" in data:
+            sections.append(("高优先级行为约束与准则", data.get("行为约束与准则"), 5200))
+        elif "行为准则" in data:
+            sections.append(("高优先级行为准则", data.get("行为准则"), 5200))
         if "角色档案" in data:
-            sections.append(("角色档案", data.get("角色档案")))
-        if "行为准则" in data:
-            sections.append(("行为准则", data.get("行为准则")))
-        elif "行为约束与准则" in data:
-            sections.append(("行为准则", data.get("行为约束与准则")))
+            sections.append(("角色档案", data.get("角色档案"), 3600))
+        if "核心关系" in data:
+            sections.append(("核心关系", data.get("核心关系"), 2400))
         if "风格与语气" in data:
-            sections.append(("风格与语气", data.get("风格与语气")))
+            sections.append(("风格与语气", data.get("风格与语气"), 2400))
+        if "人格范例" in data:
+            sections.append(("人格范例", data.get("人格范例"), 2800))
+        if "世界观元素" in data:
+            sections.append(("世界观元素", data.get("世界观元素"), 1600))
 
         if not sections:
-            return json.dumps(data, ensure_ascii=False)[:6000]
+            return json.dumps(data, ensure_ascii=False)[:12000]
 
         parts: list[str] = []
-        for title, content in sections:
-            serialized = json.dumps(content, ensure_ascii=False, indent=2)[:2200]
+        for title, content, limit in sections:
+            serialized = json.dumps(content, ensure_ascii=False, indent=2)[:limit]
             parts.append(f"【{title}】\n{serialized}")
 
         structured = "\n\n".join(parts)
-        return structured[:6000]
+        return structured[:14000]
 
     def _resolve_config_path(self) -> Path:
         app_dir = self._app_data_dir("FleetSnowfluff")

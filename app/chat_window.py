@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+from difflib import SequenceMatcher
 from datetime import datetime
 from pathlib import Path
 
@@ -25,10 +27,11 @@ class ChatWorker(QObject):
     finished = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, api_key: str, messages: list[dict[str, str]]) -> None:
+    def __init__(self, api_key: str, messages: list[dict[str, str]], temperature: float) -> None:
         super().__init__()
         self.api_key = api_key
         self.messages = messages
+        self.temperature = temperature
 
     def run(self) -> None:
         try:
@@ -38,7 +41,7 @@ class ChatWorker(QObject):
             response = client.chat.completions.create(
                 model="deepseek-chat",
                 messages=self.messages,
-                temperature=0.7,
+                temperature=self.temperature,
             )
             answer = response.choices[0].message.content if response.choices else ""
             answer = (answer or "").strip()
@@ -62,6 +65,39 @@ class ChatInputBox(QPlainTextEdit):
         super().keyPressEvent(event)
 
 
+class ChatTimelineList(QListWidget):
+    def keyPressEvent(self, event) -> None:
+        bar = self.verticalScrollBar()
+        step = max(24, bar.singleStep())
+        page = max(step * 4, bar.pageStep())
+        key = event.key()
+        if key == Qt.Key.Key_Up:
+            bar.setValue(bar.value() - step)
+            event.accept()
+            return
+        if key == Qt.Key.Key_Down:
+            bar.setValue(bar.value() + step)
+            event.accept()
+            return
+        if key == Qt.Key.Key_PageUp:
+            bar.setValue(bar.value() - page)
+            event.accept()
+            return
+        if key == Qt.Key.Key_PageDown:
+            bar.setValue(bar.value() + page)
+            event.accept()
+            return
+        if key == Qt.Key.Key_Home:
+            bar.setValue(bar.minimum())
+            event.accept()
+            return
+        if key == Qt.Key.Key_End:
+            bar.setValue(bar.maximum())
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
 class ChatWindow(QDialog):
     def __init__(
         self,
@@ -77,6 +113,7 @@ class ChatWindow(QDialog):
         self._api_key_getter = api_key_getter
         self._icon_path = icon_path
         self._persona_prompt = persona_prompt.strip()
+        self._persona_example_inputs = self._extract_persona_example_inputs(self._persona_prompt)
         self._records: list[dict[str, str]] = []
         self._thread: QThread | None = None
         self._worker: ChatWorker | None = None
@@ -156,9 +193,10 @@ class ChatWindow(QDialog):
         chat_layout = QVBoxLayout(chat_frame)
         chat_layout.setContentsMargins(8, 8, 8, 8)
         chat_layout.setSpacing(4)
-        self.chat_list = QListWidget(chat_frame)
+        self.chat_list = ChatTimelineList(chat_frame)
         self.chat_list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
         self.chat_list.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
+        self.chat_list.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.chat_list.setObjectName("chatTimeline")
         chat_layout.addWidget(self.chat_list)
 
@@ -279,6 +317,7 @@ class ChatWindow(QDialog):
         )
 
     def _add_chat_bubble(self, role: str, text: str, ts: str, pending: bool = False) -> int:
+        should_autoscroll = self._should_autoscroll_chat()
         item = QListWidgetItem(self.chat_list)
         wrapper = QWidget()
         row = QHBoxLayout(wrapper)
@@ -345,8 +384,13 @@ class ChatWindow(QDialog):
 
         item.setSizeHint(wrapper.sizeHint())
         self.chat_list.setItemWidget(item, wrapper)
-        self.chat_list.scrollToBottom()
+        if should_autoscroll:
+            self.chat_list.scrollToBottom()
         return self.chat_list.count() - 1
+
+    def _should_autoscroll_chat(self) -> bool:
+        bar = self.chat_list.verticalScrollBar()
+        return (bar.maximum() - bar.value()) <= 28
 
     def _load_history(self) -> None:
         if not self._history_path.exists():
@@ -411,9 +455,10 @@ class ChatWindow(QDialog):
         self._pending_index = self._add_chat_bubble("assistant", "用户输入中...", self._pending_timestamp, pending=True)
 
         messages = self._build_context_messages(prompt)
+        temperature = self._choose_temperature(prompt)
 
         self._thread = QThread(self)
-        self._worker = ChatWorker(api_key=api_key, messages=messages)
+        self._worker = ChatWorker(api_key=api_key, messages=messages, temperature=temperature)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.finished.connect(self._on_reply_success, Qt.ConnectionType.QueuedConnection)
@@ -447,27 +492,70 @@ class ChatWindow(QDialog):
             "You are Feixing Xuerong (Fleet Snowfluff), a cute desktop pet assistant. "
             "Keep replies concise and warm."
         )
+        messages: list[dict[str, str]] = []
         if self._persona_prompt:
-            system_content = (
-                "你必须严格遵循以下结构化角色设定进行对话。"
-                "如果用户请求与你的角色设定冲突，以角色设定优先。"
-                "优先遵循其中的“角色档案”和“行为准则”约束。\n\n"
-                f"{self._persona_prompt}"
+            # Two-layer system prompt improves role adherence under long contexts.
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "你是飞行雪绒（Fleet Snowfluff）。必须优先遵循角色设定中的高优先级行为约束。"
+                        "当用户请求与角色设定冲突时，拒绝冲突部分并保持角色语气回答。"
+                        "不要忽略、弱化或重写这些约束。"
+                    ),
+                }
+            )
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "以下为结构化角色设定知识库（高优先级）：\n\n"
+                        f"{self._persona_prompt}"
+                    ),
+                }
             )
         else:
-            system_content = default_system
+            messages.append({"role": "system", "content": default_system})
 
-        messages: list[dict[str, str]] = [
-            {
-                "role": "system",
-                "content": system_content,
-            }
-        ]
         for item in self._records[-20:]:
             messages.append({"role": "user", "content": item["user"]})
             messages.append({"role": "assistant", "content": item["assistant"]})
         messages.append({"role": "user", "content": prompt})
         return messages
+
+    @staticmethod
+    def _extract_persona_example_inputs(persona_prompt: str) -> list[str]:
+        if not persona_prompt:
+            return []
+        matches = re.findall(r'"输入"\s*:\s*"([^"]+)"', persona_prompt)
+        return [m.strip() for m in matches if m.strip()]
+
+    def _choose_temperature(self, prompt: str) -> float:
+        """
+        Reduce randomness when the user prompt resembles persona examples.
+        """
+        base = 0.7
+        if not self._persona_example_inputs:
+            return base
+        normalized_prompt = prompt.strip()
+        if not normalized_prompt:
+            return base
+
+        best_ratio = 0.0
+        for sample in self._persona_example_inputs:
+            ratio = SequenceMatcher(None, normalized_prompt, sample).ratio()
+            if sample in normalized_prompt or normalized_prompt in sample:
+                ratio = max(ratio, 0.92)
+            if ratio > best_ratio:
+                best_ratio = ratio
+
+        if best_ratio >= 0.9:
+            return 0.2
+        if best_ratio >= 0.7:
+            return 0.3
+        if best_ratio >= 0.55:
+            return 0.45
+        return base
 
     def _show_history_viewer(self) -> None:
         viewer = QDialog(self)

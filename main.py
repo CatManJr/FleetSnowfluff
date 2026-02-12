@@ -50,6 +50,25 @@ def main() -> None:
     app.setApplicationName("Fleet Snowfluff")
     app.setApplicationDisplayName("Fleet Snowfluff")
     app.setQuitOnLastWindowClosed(False)
+    app.setStyleSheet(
+        """
+        QMessageBox {
+            background: #ffffff;
+            color: #000000;
+        }
+        QMessageBox QLabel {
+            color: #000000;
+        }
+        QMessageBox QPushButton {
+            color: #000000;
+            background: #f7f7f7;
+            border: 1px solid #d0d0d0;
+            border-radius: 6px;
+            padding: 4px 10px;
+            min-width: 72px;
+        }
+        """
+    )
 
     resources_dir = _resolve_resources_dir()
     icon_path = resources_dir / "icon.webp"
