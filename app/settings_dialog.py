@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QSpinBox, QVBoxLayout
+from PySide6.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QSpinBox, QVBoxLayout
 
 
 class SettingsDialog(QDialog):
@@ -9,6 +9,7 @@ class SettingsDialog(QDialog):
         api_key: str,
         min_jump_distance: int,
         flight_speed: int,
+        reasoning_enabled: bool,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -33,10 +34,14 @@ class SettingsDialog(QDialog):
         self.flight_speed_input.setSuffix(" px/tick")
         self.flight_speed_input.setValue(max(1, int(flight_speed)))
 
+        self.reasoning_enabled_input = QCheckBox("启用 Reasoning 模式（deepseek-reasoner）", self)
+        self.reasoning_enabled_input.setChecked(bool(reasoning_enabled))
+
         form = QFormLayout()
         form.addRow("DeepSeek API Key", self.api_key_input)
         form.addRow("最短跳跃距离", self.min_jump_distance_input)
         form.addRow("飞行速度", self.flight_speed_input)
+        form.addRow("聊天模型", self.reasoning_enabled_input)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
@@ -54,3 +59,6 @@ class SettingsDialog(QDialog):
 
     def flight_speed(self) -> int:
         return int(self.flight_speed_input.value())
+
+    def reasoning_enabled(self) -> bool:
+        return bool(self.reasoning_enabled_input.isChecked())

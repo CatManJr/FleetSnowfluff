@@ -27,19 +27,27 @@ class ChatWorker(QObject):
     finished = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, api_key: str, messages: list[dict[str, str]], temperature: float) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        messages: list[dict[str, str]],
+        temperature: float,
+        reasoning_enabled: bool,
+    ) -> None:
         super().__init__()
         self.api_key = api_key
         self.messages = messages
         self.temperature = temperature
+        self.reasoning_enabled = reasoning_enabled
 
     def run(self) -> None:
         try:
             from openai import OpenAI
 
             client = OpenAI(api_key=self.api_key, base_url="https://api.deepseek.com")
+            model = "deepseek-reasoner" if self.reasoning_enabled else "deepseek-chat"
             response = client.chat.completions.create(
-                model="deepseek-chat",
+                model=model,
                 messages=self.messages,
                 temperature=self.temperature,
             )
@@ -121,6 +129,7 @@ class ChatWindow(QDialog):
         self,
         config_dir: Path,
         api_key_getter,
+        reasoning_enabled_getter=None,
         icon_path: Path | None = None,
         persona_prompt: str = "",
         parent=None,
@@ -129,6 +138,7 @@ class ChatWindow(QDialog):
         self._config_dir = config_dir
         self._history_path = config_dir / "chat_history.jsonl"
         self._api_key_getter = api_key_getter
+        self._reasoning_enabled_getter = reasoning_enabled_getter or (lambda: False)
         self._icon_path = icon_path
         self._send_icon_path = None
         if icon_path is not None:
@@ -520,7 +530,12 @@ class ChatWindow(QDialog):
         temperature = self._choose_temperature(prompt)
 
         self._thread = QThread(self)
-        self._worker = ChatWorker(api_key=api_key, messages=messages, temperature=temperature)
+        self._worker = ChatWorker(
+            api_key=api_key,
+            messages=messages,
+            temperature=temperature,
+            reasoning_enabled=bool(self._reasoning_enabled_getter()),
+        )
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.finished.connect(self._on_reply_success, Qt.ConnectionType.QueuedConnection)

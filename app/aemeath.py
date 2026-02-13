@@ -33,6 +33,7 @@ class Aemeath(QLabel):
         self.resources_dir = resources_dir
         self._config_path = self._resolve_config_path()
         self._api_key = ""
+        self._reasoning_enabled = False
         self.idle_ids = [1, 2, 3, 4, 5, 6, 7]
         self.hover_id = 4
         self.seal_id = 8
@@ -228,6 +229,13 @@ class Aemeath(QLabel):
         except (OSError, json.JSONDecodeError):
             return
         self._api_key = str(data.get("deepseek_api_key", "")).strip()
+        reasoning_raw = data.get("reasoning_enabled", self._reasoning_enabled)
+        if isinstance(reasoning_raw, bool):
+            self._reasoning_enabled = reasoning_raw
+        elif isinstance(reasoning_raw, str):
+            self._reasoning_enabled = reasoning_raw.strip().lower() in {"1", "true", "yes", "on"}
+        else:
+            self._reasoning_enabled = bool(reasoning_raw)
         try:
             self._min_jump_distance_px = max(20, int(data.get("min_jump_distance_px", self._min_jump_distance_px)))
         except (TypeError, ValueError):
@@ -240,6 +248,7 @@ class Aemeath(QLabel):
     def _save_config(self) -> bool:
         payload = {
             "deepseek_api_key": self._api_key,
+            "reasoning_enabled": self._reasoning_enabled,
             "min_jump_distance_px": self._min_jump_distance_px,
             "flight_speed_px": self._flight_base_speed_px,
         }
@@ -300,11 +309,13 @@ class Aemeath(QLabel):
             api_key=self._api_key,
             min_jump_distance=self._min_jump_distance_px,
             flight_speed=self._flight_base_speed_px,
+            reasoning_enabled=self._reasoning_enabled,
             parent=None,
         )
         if dialog.exec() != SettingsDialog.DialogCode.Accepted:
             return
         self._api_key = dialog.api_key()
+        self._reasoning_enabled = dialog.reasoning_enabled()
         self._min_jump_distance_px = dialog.min_jump_distance()
         self._flight_base_speed_px = dialog.flight_speed()
         if self._save_config():
@@ -842,6 +853,7 @@ class Aemeath(QLabel):
             self._chat_window = ChatWindow(
                 config_dir=self._config_path.parent,
                 api_key_getter=lambda: self._api_key,
+                reasoning_enabled_getter=lambda: self._reasoning_enabled,
                 icon_path=self.resources_dir / "icon.webp",
                 persona_prompt=self._persona_prompt,
                 parent=None,
