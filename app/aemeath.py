@@ -372,8 +372,8 @@ class Aemeath(QLabel):
             self._flash_move_large_range()
 
         # step2: whether to move after switch (1.gif must move)
-        # Non-1 actions: 80% move / 20% stay.
-        should_move = True if next_movie_id == 1 else (random.random() < 0.8)
+        # Non-1 actions: 90% move / 10% stay.
+        should_move = True if next_movie_id == 1 else (random.random() < 0.9)
         if should_move:
             self._start_slow_flight()
 
@@ -390,7 +390,7 @@ class Aemeath(QLabel):
             return
         target = self._pick_random_position(
             area=area,
-            min_distance=max(90, int(min(area.width(), area.height()) * 0.18)),
+            min_distance=max(120, int(min(area.width(), area.height()) * 0.18)),
         )
         if target is None:
             return
@@ -1155,8 +1155,11 @@ class Aemeath(QLabel):
 
     def _open_music_window(self) -> None:
         if not self._is_widget_alive(self._music_window):
+            music_icon = self.resources_dir / "singer_icon.PNG"
+            if not music_icon.exists():
+                music_icon = self.resources_dir / "icon.webp"
             self._music_window = MusicWindow(
-                icon_path=self.resources_dir / "icon.webp",
+                icon_path=music_icon,
                 playlist_bg_path=self._music_background_path(),
                 list_tracks_fn=self._list_music_tracks,
                 import_tracks_fn=self._import_music_files,

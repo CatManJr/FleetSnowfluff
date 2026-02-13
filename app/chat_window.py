@@ -6,8 +6,8 @@ from difflib import SequenceMatcher
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QObject, QSize, Qt, QThread, Signal
+from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -55,10 +55,28 @@ class ChatWorker(QObject):
 class ChatInputBox(QPlainTextEdit):
     submitRequested = Signal()
 
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._ime_composing = False
+
+    def inputMethodEvent(self, event) -> None:
+        self._ime_composing = bool(event.preeditString())
+        super().inputMethodEvent(event)
+        # Some IMEs clear preedit after committing selected text.
+        if not event.preeditString():
+            self._ime_composing = False
+
     def keyPressEvent(self, event) -> None:
         is_enter = event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
-        is_shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
-        if is_enter and not is_shift:
+        modifiers = event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+        is_shift = modifiers == Qt.KeyboardModifier.ShiftModifier
+        is_plain_enter = modifiers == Qt.KeyboardModifier.NoModifier
+        if is_enter and self._ime_composing:
+            # During IME composition/selection, Enter confirms candidate text.
+            # Never treat it as submit in this state.
+            super().keyPressEvent(event)
+            return
+        if is_enter and is_plain_enter:
             self.submitRequested.emit()
             event.accept()
             return
@@ -112,6 +130,14 @@ class ChatWindow(QDialog):
         self._history_path = config_dir / "chat_history.jsonl"
         self._api_key_getter = api_key_getter
         self._icon_path = icon_path
+        self._send_icon_path = None
+        if icon_path is not None:
+            send_icon_dir = icon_path.parent
+            for filename in ("paperplane.PNG", "paperplane.png"):
+                candidate = send_icon_dir / filename
+                if candidate.exists():
+                    self._send_icon_path = candidate
+                    break
         self._persona_prompt = persona_prompt.strip()
         self._persona_example_inputs = self._extract_persona_example_inputs(self._persona_prompt)
         self._records: list[dict[str, str]] = []
@@ -131,6 +157,28 @@ class ChatWindow(QDialog):
         self._build_ui()
         self._load_history()
         self._render_records()
+
+    @staticmethod
+    def _load_send_icon(icon_path: Path) -> QIcon | None:
+        image = QImage(str(icon_path))
+        if image.isNull():
+            return None
+        # Fallback for assets exported without alpha channel:
+        # treat near-white background as transparent.
+        if not image.hasAlphaChannel():
+            image = image.convertToFormat(QImage.Format.Format_ARGB32)
+            width = image.width()
+            height = image.height()
+            for y in range(height):
+                for x in range(width):
+                    color = image.pixelColor(x, y)
+                    if color.red() >= 246 and color.green() >= 246 and color.blue() >= 246:
+                        color.setAlpha(0)
+                        image.setPixelColor(x, y, color)
+        pixmap = QPixmap.fromImage(image)
+        if pixmap.isNull():
+            return None
+        return QIcon(pixmap)
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -212,8 +260,19 @@ class ChatWindow(QDialog):
         self.input_box.setFixedHeight(52)
         self.input_box.submitRequested.connect(self._send_message)
 
-        self.send_button = QPushButton("发送", input_frame)
+        self.send_button = QPushButton(input_frame)
         self.send_button.setObjectName("sendButton")
+        self.send_button.setFixedSize(52, 52)
+        self.send_button.setToolTip("发送")
+        if self._send_icon_path is not None and self._send_icon_path.exists():
+            send_icon = self._load_send_icon(self._send_icon_path)
+            if send_icon is not None:
+                self.send_button.setIcon(send_icon)
+                self.send_button.setIconSize(QSize(46, 46))
+            else:
+                self.send_button.setText("✈")
+        else:
+            self.send_button.setText("✈")
         self.send_button.clicked.connect(self._send_message)
 
         input_layout.addWidget(self.input_box, 1)
@@ -255,12 +314,12 @@ class ChatWindow(QDialog):
                 border: 2px solid #ffffff;
             }
             QLabel#navTitle {
-                font-size: 20px;
+                font-size: 18px;
                 font-weight: 700;
                 color: #221626;
             }
             QLabel#navSubtitle {
-                font-size: 14px;
+                font-size: 12px;
                 color: #9a6b85;
             }
             QPushButton#navActionButton {
@@ -269,7 +328,7 @@ class ChatWindow(QDialog):
                 border-radius: 10px;
                 color: #8d365d;
                 padding: 4px 8px;
-                font-size: 17px;
+                font-size: 15px;
             }
             QFrame#panelCard {
                 background: #fff7fb;
@@ -290,10 +349,13 @@ class ChatWindow(QDialog):
                 border-radius: 16px;
                 padding: 8px;
                 color: #2a1f2a;
-                font-size: 18px;
+                font-size: 16px;
             }
             QPushButton#sendButton {
-                min-width: 80px;
+                min-width: 52px;
+                max-width: 52px;
+                min-height: 52px;
+                max-height: 52px;
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
                     stop:0 #ff5fa2,
@@ -303,7 +365,8 @@ class ChatWindow(QDialog):
                 border-radius: 16px;
                 color: #ffffff;
                 font-weight: 600;
-                font-size: 16px;
+                font-size: 20px;
+                padding: 0px;
             }
             QPushButton:disabled {
                 background: #f3dbe8;
@@ -327,7 +390,7 @@ class ChatWindow(QDialog):
         side_layout.setSpacing(4)
 
         time_label = QLabel(ts, side)
-        time_label.setStyleSheet("color:#9ba3c7; font-size:13px;")
+        time_label.setStyleSheet("color:#9ba3c7; font-size:11px;")
         if role == "user":
             time_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         else:
@@ -344,7 +407,7 @@ class ChatWindow(QDialog):
         body.setWordWrap(True)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         body.setStyleSheet(
-            "font-size: 16px; "
+            "font-size: 14px; "
             "background: transparent; border: none; margin: 0; padding: 0;"
         )
 
@@ -438,7 +501,7 @@ class ChatWindow(QDialog):
         if not prompt:
             return
         self.send_button.setDisabled(True)
-        self.input_box.setDisabled(True)
+        self.input_box.setReadOnly(True)
         self.input_box.clear()
 
         self._pending_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -449,7 +512,7 @@ class ChatWindow(QDialog):
         if not api_key:
             QMessageBox.information(self, "缺少 API Key", "请先在右键设置里填写 DeepSeek API Key。")
             self.send_button.setDisabled(False)
-            self.input_box.setDisabled(False)
+            self.input_box.setReadOnly(False)
             return
         self._pending_index = self._add_chat_bubble("assistant", "用户输入中...", self._pending_timestamp, pending=True)
 
@@ -475,7 +538,7 @@ class ChatWindow(QDialog):
         self._pending_index = None
         self._pending_prompt = ""
         self.send_button.setDisabled(False)
-        self.input_box.setDisabled(False)
+        self.input_box.setReadOnly(False)
 
     def _on_reply_failed(self, error_text: str) -> None:
         if self._pending_index is not None and 0 <= self._pending_index < self.chat_list.count():
@@ -483,7 +546,7 @@ class ChatWindow(QDialog):
             self._add_chat_bubble("assistant", f"[失败] {error_text}", self._pending_timestamp)
         self._pending_index = None
         self.send_button.setDisabled(False)
-        self.input_box.setDisabled(False)
+        self.input_box.setReadOnly(False)
         QMessageBox.warning(self, "请求失败", f"调用 DeepSeek 失败：{error_text}")
 
     def _build_context_messages(self, prompt: str) -> list[dict[str, str]]:

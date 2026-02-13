@@ -95,10 +95,13 @@ def main() -> None:
     )
 
     icon_path = resources_dir / "icon.webp"
-    if icon_path.exists():
+    # On macOS, runtime setWindowIcon may override the bundle dock icon and
+    # bypass the system's rounded app-icon rendering (shows as square/zoomed).
+    should_apply_runtime_icon = sys.platform != "darwin"
+    if should_apply_runtime_icon and icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
     pet = Aemeath(resources_dir=resources_dir)
-    if icon_path.exists():
+    if should_apply_runtime_icon and icon_path.exists():
         pet.setWindowIcon(QIcon(str(icon_path)))
     app.setProperty("aemeath", pet)
     sys.exit(app.exec())

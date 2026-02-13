@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
-from PySide6.QtCore import QEvent, QPoint, QSettings, QSignalBlocker, Signal
+from PySide6.QtCore import QEvent, QPoint, QSettings, QSignalBlocker, QSize, Signal
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import (
     QBrush,
@@ -13,6 +13,7 @@ from PySide6.QtGui import (
     QColor,
     QFont,
     QGuiApplication,
+    QIcon,
     QMouseEvent,
     QPainter,
     QPaintEvent,
@@ -42,6 +43,19 @@ class TrackInfo(NamedTuple):
     title: str
     artist: str
     album: str
+
+
+def _load_icon_from_candidates(icon_dir: Path | None, filenames: tuple[str, ...]) -> QIcon | None:
+    if icon_dir is None:
+        return None
+    for filename in filenames:
+        candidate = icon_dir / filename
+        if not candidate.exists():
+            continue
+        icon = QIcon(str(candidate))
+        if not icon.isNull():
+            return icon
+    return None
 
 
 class PlaylistTreeWidget(QTreeWidget):
@@ -249,6 +263,9 @@ class MiniPlayerBar(QDialog):
         get_position_ms_fn,
         get_duration_ms_fn,
         seek_position_ms_fn,
+        get_volume_percent_fn,
+        set_volume_percent_fn,
+        icon_dir: Path | None,
     ) -> None:
         super().__init__(None)
         self._toggle_play_pause_fn = toggle_play_pause_fn
@@ -263,22 +280,30 @@ class MiniPlayerBar(QDialog):
         self._get_position_ms_fn = get_position_ms_fn
         self._get_duration_ms_fn = get_duration_ms_fn
         self._seek_position_ms_fn = seek_position_ms_fn
+        self._get_volume_percent_fn = get_volume_percent_fn
+        self._set_volume_percent_fn = set_volume_percent_fn
+        self._icon_dir = icon_dir
         self._settings = QSettings("FleetSnowfluff", "MusicWindow")
         self._drag_offset: QPoint | None = None
         self._has_custom_pos = False
         self._is_scrubbing = False
+        self._icons: dict[str, QIcon] = {}
 
         self.setWindowFlags(
             Qt.WindowType.Tool
             | Qt.WindowType.FramelessWindowHint
         )
+        self.setWindowFlag(Qt.WindowType.NoDropShadowWindowHint, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setWindowTitle("飞行雪绒电台 - Mini")
-        self.setWindowOpacity(0.93)
+        # Avoid macOS alpha-compositing fringe around rounded corners.
+        # Keep window fully opaque at compositor level and control translucency
+        # via the card gradient alpha only.
+        self.setWindowOpacity(1.0)
         self.resize(360, 60)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(1, 1, 1, 1)
+        root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
         self.container = QFrame(self)
@@ -296,30 +321,53 @@ class MiniPlayerBar(QDialog):
         # Keep title viewport compact to mimic Apple Music mini-player.
         self.track_label.setFixedWidth(78)
 
-        self.prev_button = QPushButton("⏮")
+        self.prev_button = QPushButton("")
         self.prev_button.setObjectName("miniBtn")
         self.prev_button.setToolTip("上一首")
         self.prev_button.clicked.connect(self._on_prev_clicked)
 
-        self.play_button = QPushButton("▶")
+        self.play_button = QPushButton("")
         self.play_button.setObjectName("miniBtn")
         self.play_button.setToolTip("播放 / 暂停")
         self.play_button.clicked.connect(self._on_toggle_clicked)
 
-        self.next_button = QPushButton("⏭")
+        self.next_button = QPushButton("")
         self.next_button.setObjectName("miniBtn")
         self.next_button.setToolTip("下一首")
         self.next_button.clicked.connect(self._on_next_clicked)
 
-        self.playlist_button = QPushButton("☰")
+        self.playlist_button = QPushButton("")
         self.playlist_button.setObjectName("miniBtn")
         self.playlist_button.setToolTip("播放列表")
         self.playlist_button.clicked.connect(self._show_playlist_menu)
 
-        self.restore_button = QPushButton("⤢")
+        self.volume_button = QPushButton("")
+        self.volume_button.setObjectName("miniBtn")
+        self.volume_button.setToolTip("音量")
+        self.volume_button.clicked.connect(self._toggle_volume_popup)
+
+        self.restore_button = QPushButton("")
         self.restore_button.setObjectName("miniBtnExpand")
         self.restore_button.setToolTip("展开到完整播放器")
         self.restore_button.clicked.connect(self._restore_main_fn)
+
+        self.volume_popup = QWidget(self)
+        self.volume_popup.setObjectName("miniVolumePopup")
+        self.volume_popup.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        volume_popup_layout = QVBoxLayout(self.volume_popup)
+        volume_popup_layout.setContentsMargins(8, 8, 8, 8)
+        volume_popup_layout.setSpacing(6)
+        self.volume_value_label = QLabel("70%")
+        self.volume_value_label.setObjectName("miniVolumeValue")
+        self.volume_value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.volume_slider = QSlider(Qt.Orientation.Vertical)
+        self.volume_slider.setObjectName("miniVolumeSlider")
+        self.volume_slider.setRange(0, 100)
+        self.volume_slider.valueChanged.connect(self._on_volume_changed)
+        volume_popup_layout.addWidget(self.volume_value_label)
+        volume_popup_layout.addWidget(self.volume_slider, 1)
+        self.volume_popup.resize(54, 170)
+        self._sync_volume_ui(max(0, min(100, int(self._get_volume_percent_fn()))))
 
         self.progress_slider = QSlider(Qt.Orientation.Horizontal, self.container)
         self.progress_slider.setObjectName("miniProgressSlider")
@@ -333,6 +381,7 @@ class MiniPlayerBar(QDialog):
         top_row.addWidget(self.play_button)
         top_row.addWidget(self.next_button)
         top_row.addWidget(self.playlist_button)
+        top_row.addWidget(self.volume_button)
         top_row.addWidget(self.restore_button)
         container_layout.addLayout(top_row)
         container_layout.addWidget(self.progress_slider)
@@ -355,9 +404,10 @@ class MiniPlayerBar(QDialog):
             QFrame#miniCard {
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
-                    stop:0 rgba(255, 255, 255, 0.48),
-                    stop:0.45 rgba(255, 246, 252, 0.42),
-                    stop:1 rgba(255, 232, 245, 0.36)
+                    stop:0 rgba(255, 255, 255, 0.62),
+                    stop:0.18 rgba(255, 252, 255, 0.50),
+                    stop:0.52 rgba(255, 245, 252, 0.40),
+                    stop:1 rgba(255, 228, 244, 0.34)
                 );
                 border: none;
                 border-radius: 18px;
@@ -414,6 +464,44 @@ class MiniPlayerBar(QDialog):
             QPushButton#miniBtnExpand:pressed {
                 background: rgba(255, 208, 231, 0.56);
             }
+            QWidget#miniVolumePopup {
+                background: rgba(255, 247, 251, 0.96);
+                border: 1px solid rgba(255, 197, 224, 0.85);
+                border-radius: 12px;
+            }
+            QLabel#miniVolumeValue {
+                color: #8d365d;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            QSlider#miniVolumeSlider::groove:vertical {
+                width: 8px;
+                border-radius: 4px;
+                background: rgba(255, 221, 238, 0.52);
+            }
+            QSlider#miniVolumeSlider::sub-page:vertical {
+                border-radius: 4px;
+                background: qlineargradient(
+                    x1:0, y1:1, x2:0, y2:0,
+                    stop:0 rgba(255, 231, 243, 0.86),
+                    stop:1 rgba(255, 208, 230, 0.78)
+                );
+            }
+            QSlider#miniVolumeSlider::add-page:vertical {
+                border-radius: 4px;
+                background: qlineargradient(
+                    x1:0, y1:1, x2:0, y2:0,
+                    stop:0 rgba(255, 119, 176, 0.96),
+                    stop:1 rgba(255, 153, 197, 0.96)
+                );
+            }
+            QSlider#miniVolumeSlider::handle:vertical {
+                height: 14px;
+                margin: 0 -4px;
+                border-radius: 7px;
+                border: none;
+                background: rgba(255, 248, 252, 0.98);
+            }
             QSlider#miniProgressSlider::groove:horizontal {
                 height: 4px;
                 border-radius: 2px;
@@ -442,6 +530,48 @@ class MiniPlayerBar(QDialog):
         self._progress_timer.start()
         self._restore_saved_position()
         self.set_keep_on_top(True)
+        self._load_button_icons()
+
+    def _load_button_icons(self) -> None:
+        icon_specs = {
+            "prev": ("prev.png", "previous.png", "ic_prev.png"),
+            "play": ("play.png", "ic_play.png"),
+            "pause": ("pause.png", "ic_pause.png"),
+            "next": ("next.png", "ic_next.png"),
+            "playlist": ("playlist.png", "list.png", "menu.png", "ic_playlist.png"),
+            "volume": ("volume.png", "ic_volume.png"),
+            "expand": ("expand.png", "exitfull.png", "ic_expand.png"),
+        }
+        for key, filenames in icon_specs.items():
+            icon = _load_icon_from_candidates(self._icon_dir, filenames)
+            if icon is not None:
+                self._icons[key] = icon
+
+        if "prev" in self._icons:
+            self.prev_button.setIcon(self._icons["prev"])
+            self.prev_button.setIconSize(QSize(24, 24))
+        else:
+            self.prev_button.setText("⏮")
+        if "next" in self._icons:
+            self.next_button.setIcon(self._icons["next"])
+            self.next_button.setIconSize(QSize(24, 24))
+        else:
+            self.next_button.setText("⏭")
+        if "playlist" in self._icons:
+            self.playlist_button.setIcon(self._icons["playlist"])
+            self.playlist_button.setIconSize(QSize(24, 24))
+        else:
+            self.playlist_button.setText("☰")
+        if "volume" in self._icons:
+            self.volume_button.setIcon(self._icons["volume"])
+            self.volume_button.setIconSize(QSize(24, 24))
+        else:
+            self.volume_button.setText("🔊")
+        if "expand" in self._icons:
+            self.restore_button.setIcon(self._icons["expand"])
+            self.restore_button.setIconSize(QSize(24, 24))
+        else:
+            self.restore_button.setText("⤢")
 
     def _on_toggle_clicked(self) -> None:
         self._toggle_play_pause_fn()
@@ -463,8 +593,20 @@ class MiniPlayerBar(QDialog):
             info = self._extract_track_info_fn(current)
             label_text = f"{info.title} · {info.artist}"
         self.track_label.setMarqueeText(label_text)
-        self.play_button.setText("⏸" if self._is_playing_fn() else "▶")
+        is_playing = self._is_playing_fn()
+        if is_playing and "pause" in self._icons:
+            self.play_button.setIcon(self._icons["pause"])
+            self.play_button.setText("")
+            self.play_button.setIconSize(QSize(24, 24))
+        elif not is_playing and "play" in self._icons:
+            self.play_button.setIcon(self._icons["play"])
+            self.play_button.setText("")
+            self.play_button.setIconSize(QSize(24, 24))
+        else:
+            self.play_button.setIcon(QIcon())
+            self.play_button.setText("⏸" if is_playing else "▶")
         self.playlist_button.setEnabled(bool(self._list_tracks_fn()))
+        self._sync_volume_ui(self._get_volume_percent_fn())
         self._update_compact_width(label_text)
         self._update_progress_ui(force=True)
 
@@ -515,6 +657,29 @@ class MiniPlayerBar(QDialog):
     def _play_from_menu(self, track_path: Path) -> None:
         self._play_track_fn(track_path)
         self.refresh_state()
+
+    def _on_volume_changed(self, value: int) -> None:
+        clamped = max(0, min(100, int(value)))
+        self._sync_volume_ui(clamped)
+        self._set_volume_percent_fn(clamped)
+
+    def _sync_volume_ui(self, volume_percent: int) -> None:
+        clamped = max(0, min(100, int(volume_percent)))
+        with QSignalBlocker(self.volume_slider):
+            self.volume_slider.setValue(clamped)
+        self.volume_value_label.setText(f"{clamped}%")
+
+    def _toggle_volume_popup(self) -> None:
+        if self.volume_popup.isVisible():
+            self.volume_popup.hide()
+            return
+        self._sync_volume_ui(self._get_volume_percent_fn())
+        anchor = self.volume_button.mapToGlobal(QPoint(0, 0))
+        x = anchor.x() + (self.volume_button.width() - self.volume_popup.width()) // 2
+        y = anchor.y() - self.volume_popup.height() - 6
+        self.volume_popup.move(x, y)
+        self.volume_popup.show()
+        self.volume_popup.raise_()
 
     def has_custom_position(self) -> bool:
         return self._has_custom_pos
@@ -570,6 +735,7 @@ class MiniPlayerBar(QDialog):
         super().mouseReleaseEvent(event)
 
     def hideEvent(self, event) -> None:
+        self.volume_popup.hide()
         self._playlist_panel.hide()
         self._progress_timer.stop()
         super().hideEvent(event)
@@ -631,6 +797,11 @@ class MusicWindow(QDialog):
         self._is_scrubbing = False
         self._ready_emitted = False
         self._pending_enter_mini_mode = False
+        self._jumpout_icon: QIcon | None = None
+        self._icon_dir = self._icon_path.parent / "icon" if self._icon_path is not None else None
+        self._button_icons: dict[str, QIcon] = {}
+        self._follow_count = 130
+        self._is_following = False
 
         self.setWindowTitle("飞行雪绒电台")
         self.setWindowFlags(
@@ -671,8 +842,31 @@ class MusicWindow(QDialog):
                 get_position_ms_fn=self._get_position_ms_fn,
                 get_duration_ms_fn=self._get_duration_ms_fn,
                 seek_position_ms_fn=self._seek_position_ms_fn,
+                get_volume_percent_fn=self._get_volume_percent_fn,
+                set_volume_percent_fn=self._set_volume_percent_fn,
+                icon_dir=self._icon_dir,
             )
         return self._mini_bar
+
+    def _load_jumpout_icon(self) -> QIcon | None:
+        return _load_icon_from_candidates(self._icon_dir, ("jumpout.png", "jumpout.PNG", "ic_jumpout.png"))
+
+    def _load_main_button_icons(self) -> None:
+        specs = {
+            "import": ("import.png", "download.png", "ic_import.png"),
+            "remove": ("remove.png", "delete.png", "ic_remove.png"),
+            "prev": ("prev.png", "previous.png", "ic_prev.png"),
+            "play": ("play.png", "ic_play.png"),
+            "pause": ("pause.png", "ic_pause.png"),
+            "next": ("next.png", "ic_next.png"),
+            "random": ("random.png", "shuffle.png", "ic_random.png"),
+            "volume": ("volume.png", "ic_volume.png"),
+            "expand": ("expand.png", "exitfull.png", "ic_expand.png"),
+        }
+        for key, names in specs.items():
+            icon = _load_icon_from_candidates(self._icon_dir, names)
+            if icon is not None:
+                self._button_icons[key] = icon
 
     def _show_mini_bar(self) -> None:
         mini = self._ensure_mini_bar()
@@ -711,14 +905,14 @@ class MusicWindow(QDialog):
 
         avatar = QLabel("")
         avatar.setObjectName("avatarBadge")
-        avatar.setFixedSize(42, 42)
+        avatar.setFixedSize(56, 56)
         if self._icon_path is not None and self._icon_path.exists():
             pixmap = QPixmap(str(self._icon_path))
             if not pixmap.isNull():
                 avatar.setPixmap(
                     pixmap.scaled(
-                        42,
-                        42,
+                        56,
+                        56,
                         Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                         Qt.TransformationMode.SmoothTransformation,
                     )
@@ -730,11 +924,15 @@ class MusicWindow(QDialog):
         title.setObjectName("navTitle")
         nav_layout.addWidget(avatar)
         nav_layout.addWidget(title, 1)
-        self.float_bar_button = QPushButton("⤡")
-        self.float_bar_button.setObjectName("navActionBtn")
-        self.float_bar_button.setToolTip("切换到迷你播放器")
-        self.float_bar_button.clicked.connect(self._toggle_mini_bar_from_ui)
-        nav_layout.addWidget(self.float_bar_button)
+        self.follow_count_label = QLabel("")
+        self.follow_count_label.setObjectName("followCount")
+        self.follow_button = QPushButton("关注")
+        self.follow_button.setObjectName("followBtn")
+        self.follow_button.setToolTip("关注飞行雪绒")
+        self.follow_button.clicked.connect(self._on_follow_clicked)
+        self._update_follow_ui()
+        nav_layout.addWidget(self.follow_count_label)
+        nav_layout.addWidget(self.follow_button)
 
         panel = QFrame(self)
         panel.setObjectName("panelCard")
@@ -742,10 +940,27 @@ class MusicWindow(QDialog):
         panel_layout.setContentsMargins(10, 10, 10, 10)
         panel_layout.setSpacing(8)
 
+        now_playing_row = QHBoxLayout()
+        now_playing_row.setContentsMargins(0, 0, 0, 0)
+        now_playing_row.setSpacing(8)
         self.now_playing = QLabel("当前播放：-")
         self.now_playing.setObjectName("nowPlaying")
         self.now_playing.setTextFormat(Qt.TextFormat.RichText)
         self.now_playing.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.now_playing.setMinimumHeight(72)
+        self.float_bar_button = QPushButton("")
+        self.float_bar_button.setObjectName("navActionBtn")
+        self.float_bar_button.setToolTip("切换到迷你播放器")
+        self.float_bar_button.setFixedHeight(72)
+        self.float_bar_button.clicked.connect(self._toggle_mini_bar_from_ui)
+        self._jumpout_icon = self._load_jumpout_icon()
+        if self._jumpout_icon is not None:
+            self.float_bar_button.setIcon(self._jumpout_icon)
+            self.float_bar_button.setIconSize(self.float_bar_button.size() - QSize(4, 4))
+        else:
+            self.float_bar_button.setText("⤡")
+        now_playing_row.addWidget(self.now_playing, 1)
+        now_playing_row.addWidget(self.float_bar_button)
 
         progress_row = QHBoxLayout()
         progress_row.setSpacing(8)
@@ -763,7 +978,7 @@ class MusicWindow(QDialog):
         progress_row.addWidget(self.current_time_label)
         progress_row.addWidget(self.progress_slider, 1)
         progress_row.addWidget(self.total_time_label)
-        self.volume_button = QPushButton("🔊")
+        self.volume_button = QPushButton("")
         self.volume_button.setObjectName("volumeToggleBtn")
         self.volume_button.setToolTip("音量")
         self.volume_button.clicked.connect(self._toggle_volume_popup)
@@ -806,27 +1021,27 @@ class MusicWindow(QDialog):
 
         ctrl_row = QHBoxLayout()
         ctrl_row.setSpacing(8)
-        self.import_button = QPushButton("⤓")
+        self.import_button = QPushButton("")
         self.import_button.setObjectName("actionBtn")
         self.import_button.setToolTip("导入曲库")
         self.import_button.clicked.connect(self._on_import_clicked)
-        self.remove_button = QPushButton("⌫")
+        self.remove_button = QPushButton("")
         self.remove_button.setObjectName("actionBtn")
         self.remove_button.setToolTip("移除选中曲目")
         self.remove_button.clicked.connect(self._on_remove_clicked)
-        self.prev_button = QPushButton("⏮")
+        self.prev_button = QPushButton("")
         self.prev_button.setObjectName("actionBtn")
         self.prev_button.setToolTip("上一首")
         self.prev_button.clicked.connect(self._play_prev_fn)
-        self.play_button = QPushButton("▶")
+        self.play_button = QPushButton("")
         self.play_button.setObjectName("actionMainBtn")
         self.play_button.setToolTip("播放 / 暂停")
         self.play_button.clicked.connect(self._on_toggle_play_pause)
-        self.next_button = QPushButton("⏭")
+        self.next_button = QPushButton("")
         self.next_button.setObjectName("actionBtn")
         self.next_button.setToolTip("下一首")
         self.next_button.clicked.connect(self._play_next_fn)
-        self.random_button = QPushButton("🔀")
+        self.random_button = QPushButton("")
         self.random_button.setObjectName("actionBtn")
         self.random_button.setToolTip("重新随机排序")
         self.random_button.clicked.connect(self._on_random_clicked)
@@ -840,7 +1055,7 @@ class MusicWindow(QDialog):
         ctrl_row.addStretch(1)
         ctrl_row.addWidget(self.random_button)
 
-        panel_layout.addWidget(self.now_playing)
+        panel_layout.addLayout(now_playing_row)
         panel_layout.addLayout(progress_row)
         panel_layout.addWidget(self.track_list, 1)
         panel_layout.addLayout(ctrl_row)
@@ -860,11 +1075,11 @@ class MusicWindow(QDialog):
                 border-bottom: 1px solid rgba(255, 211, 230, 0.36);
             }
             QLabel#avatarBadge {
-                min-width: 42px;
-                min-height: 42px;
-                max-width: 42px;
-                max-height: 42px;
-                border-radius: 21px;
+                min-width: 56px;
+                min-height: 56px;
+                max-width: 56px;
+                max-height: 56px;
+                border-radius: 28px;
                 background: #ff5fa2;
                 color: #ffffff;
                 font-weight: 700;
@@ -876,6 +1091,37 @@ class MusicWindow(QDialog):
                 font-weight: 700;
                 color: #221626;
             }
+            QLabel#followCount {
+                color: #8d365d;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 0 2px;
+            }
+            QPushButton#followBtn {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(255, 112, 178, 0.95),
+                    stop:1 rgba(255, 139, 193, 0.92)
+                );
+                border: none;
+                border-radius: 12px;
+                color: #ffffff;
+                min-width: 56px;
+                min-height: 32px;
+                padding: 0 10px;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            QPushButton#followBtn:hover {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(255, 124, 185, 0.98),
+                    stop:1 rgba(255, 154, 202, 0.95)
+                );
+            }
+            QPushButton#followBtn:pressed {
+                background: rgba(255, 105, 170, 0.88);
+            }
             QPushButton#navActionBtn {
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
@@ -886,9 +1132,11 @@ class MusicWindow(QDialog):
                 border-radius: 14px;
                 color: #7a3658;
                 min-width: 56px;
-                min-height: 48px;
-                padding: 4px 14px;
-                font-size: 26px;
+                max-width: 56px;
+                min-height: 72px;
+                max-height: 72px;
+                padding: 0px;
+                font-size: 34px;
                 font-weight: 600;
             }
             QPushButton#navActionBtn:hover {
@@ -984,8 +1232,16 @@ class MusicWindow(QDialog):
                 border-radius: 4px;
                 background: qlineargradient(
                     x1:0, y1:1, x2:0, y2:0,
-                    stop:0 rgba(255, 153, 197, 0.96),
-                    stop:1 rgba(255, 119, 176, 0.96)
+                    stop:0 rgba(255, 231, 243, 0.86),
+                    stop:1 rgba(255, 208, 230, 0.78)
+                );
+            }
+            QSlider#volumePopupSlider::add-page:vertical {
+                border-radius: 4px;
+                background: qlineargradient(
+                    x1:0, y1:1, x2:0, y2:0,
+                    stop:0 rgba(255, 119, 176, 0.96),
+                    stop:1 rgba(255, 153, 197, 0.96)
                 );
             }
             QSlider#volumePopupSlider::handle:vertical {
@@ -1094,6 +1350,10 @@ class MusicWindow(QDialog):
             }
             """
         self.setStyleSheet(stylesheet.replace("__TRACK_LIST_BACKGROUND__", track_list_background))
+        self._load_main_button_icons()
+        self._apply_main_button_icons()
+        # Ensure volume icon state uses freshly loaded assets immediately.
+        self._sync_volume_ui(self._get_volume_percent_fn())
 
     def _on_item_double_clicked(self, _item, _column: int) -> None:
         self._on_play_selected()
@@ -1180,7 +1440,18 @@ class MusicWindow(QDialog):
 
     def _sync_float_bar_button(self) -> None:
         is_visible = self._mini_bar is not None and self._mini_bar.isVisible()
-        self.float_bar_button.setText("⤢" if is_visible else "⤡")
+        expand_icon = self._button_icons.get("expand")
+        if is_visible and expand_icon is not None:
+            self.float_bar_button.setIcon(expand_icon)
+            self.float_bar_button.setText("")
+            self.float_bar_button.setIconSize(self.float_bar_button.size() - QSize(8, 8))
+        elif self._jumpout_icon is not None:
+            self.float_bar_button.setIcon(self._jumpout_icon)
+            self.float_bar_button.setText("")
+            self.float_bar_button.setIconSize(self.float_bar_button.size() - QSize(4, 4))
+        else:
+            self.float_bar_button.setIcon(QIcon())
+            self.float_bar_button.setText("⤢" if is_visible else "⤡")
         self.float_bar_button.setToolTip("返回完整播放器" if is_visible else "切换到迷你播放器")
 
     @staticmethod
@@ -1212,11 +1483,19 @@ class MusicWindow(QDialog):
         with QSignalBlocker(self.volume_popup_slider):
             self.volume_popup_slider.setValue(clamped)
         self.volume_popup_value.setText(f"{clamped}%")
-        if clamped == 0:
+        volume_icon = self._button_icons.get("volume")
+        if volume_icon is not None:
+            self.volume_button.setIcon(volume_icon)
+            self.volume_button.setText("")
+            self.volume_button.setIconSize(QSize(20, 20))
+        elif clamped == 0:
+            self.volume_button.setIcon(QIcon())
             self.volume_button.setText("🔇")
         elif clamped < 45:
+            self.volume_button.setIcon(QIcon())
             self.volume_button.setText("🔉")
         else:
+            self.volume_button.setIcon(QIcon())
             self.volume_button.setText("🔊")
 
     def _toggle_volume_popup(self) -> None:
@@ -1315,7 +1594,51 @@ class MusicWindow(QDialog):
 
     def _sync_play_button(self) -> None:
         is_playing = bool(self._is_playing_fn())
+        pause_icon = self._button_icons.get("pause")
+        play_icon = self._button_icons.get("play")
+        if is_playing and pause_icon is not None:
+            self.play_button.setIcon(pause_icon)
+            self.play_button.setText("")
+            self.play_button.setIconSize(QSize(24, 24))
+            return
+        if (not is_playing) and play_icon is not None:
+            self.play_button.setIcon(play_icon)
+            self.play_button.setText("")
+            self.play_button.setIconSize(QSize(24, 24))
+            return
+        self.play_button.setIcon(QIcon())
         self.play_button.setText("⏸" if is_playing else "▶")
+
+    def _update_follow_ui(self) -> None:
+        self.follow_count_label.setText(f"已关注：{self._follow_count}")
+        self.follow_button.setText("已关注" if self._is_following else "关注")
+
+    def _on_follow_clicked(self) -> None:
+        if self._is_following:
+            self._is_following = False
+            self._follow_count = max(0, self._follow_count - 1)
+        else:
+            self._is_following = True
+            self._follow_count += 1
+        self._update_follow_ui()
+
+    def _apply_main_button_icons(self) -> None:
+        def apply(button: QPushButton, key: str, fallback: str, size: int = 24) -> None:
+            icon = self._button_icons.get(key)
+            if icon is not None:
+                button.setIcon(icon)
+                button.setText("")
+                button.setIconSize(QSize(size, size))
+            else:
+                button.setIcon(QIcon())
+                button.setText(fallback)
+
+        apply(self.import_button, "import", "⤓")
+        apply(self.remove_button, "remove", "⌫")
+        apply(self.prev_button, "prev", "⏮")
+        apply(self.next_button, "next", "⏭")
+        apply(self.random_button, "random", "🔀")
+        self._sync_play_button()
 
     def _set_now_playing_text(self, title: str, artist: str, album: str) -> None:
         title_html = html.escape((title or "-").strip() or "-")
