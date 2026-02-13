@@ -884,6 +884,33 @@ class MusicWindow(QDialog):
             self._mini_bar.hide()
         self._sync_float_bar_button()
 
+    def capture_visibility_state(self) -> dict[str, bool]:
+        return {
+            "main_visible": self.isVisible(),
+            "mini_visible": self._mini_bar is not None and self._mini_bar.isVisible(),
+        }
+
+    def hide_for_transform(self) -> None:
+        if self.volume_popup.isVisible():
+            self.volume_popup.hide()
+        if self.isVisible():
+            self.hide()
+        self._hide_mini_bar()
+
+    def restore_after_transform(self, state: dict[str, bool] | None) -> None:
+        if not state:
+            return
+        was_mini_visible = bool(state.get("mini_visible", False))
+        was_main_visible = bool(state.get("main_visible", False))
+        if was_mini_visible:
+            self._show_mini_bar()
+            self.hide()
+            return
+        if was_main_visible:
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
+
     def _restore_from_mini_bar(self) -> None:
         if self.volume_popup.isVisible():
             self.volume_popup.hide()
@@ -1429,10 +1456,13 @@ class MusicWindow(QDialog):
         self._hide_main_window_for_mini_mode()
 
     def _hide_main_window_for_mini_mode(self) -> None:
-        # On macOS, hiding immediately after exiting fullscreen can leave
-        # a ghost/blank frame. Minimize first, then hide on next tick.
+        # On macOS, avoid minimize-to-dock when mini bar is active.
+        # Keep window normal, push it back, then hide after a short delay
+        # to prevent transient ghost frame artifacts.
         if sys.platform == "darwin":
-            self.showMinimized()
+            self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
+            self.showNormal()
+            self.lower()
             QTimer.singleShot(90, self.hide)
             return
         # Apple Music-like mode switch: hide full player when mini player opens.
@@ -1534,7 +1564,7 @@ class MusicWindow(QDialog):
         self._track_infos = [self._extract_track_info(p) for p in self._tracks]
         title_font = QFont()
         title_font.setBold(True)
-        title_font.setPointSize(16)
+        title_font.setPointSize(14)
         for info in self._track_infos:
             item = QTreeWidgetItem([info.title, info.artist, info.album])
             item.setToolTip(0, str(info.path))

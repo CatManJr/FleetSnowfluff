@@ -54,6 +54,7 @@ class Aemeath(QLabel):
         self._music_window: MusicWindow | None = None
         self._transform_window: TransformWindow | None = None
         self._transform_restore_fullscreen_mode = False
+        self._hidden_windows_before_transform: dict[str, object] = {}
         self._is_shutting_down = False
         self._persona_prompt = self._load_persona_prompt()
         self._playlist_order: list[Path] = []
@@ -80,6 +81,7 @@ class Aemeath(QLabel):
         self._flight_timer.setInterval(58)
         self._flight_timer.timeout.connect(self._on_flight_tick)
         self._flight_target: QPoint | None = None
+        self._min_jump_distance_px = 120
         self._flight_base_speed_px = 10
         self._flight_fast_multiplier = 2.0
         self._idle_cycles_without_movie1 = 0
@@ -226,9 +228,21 @@ class Aemeath(QLabel):
         except (OSError, json.JSONDecodeError):
             return
         self._api_key = str(data.get("deepseek_api_key", "")).strip()
+        try:
+            self._min_jump_distance_px = max(20, int(data.get("min_jump_distance_px", self._min_jump_distance_px)))
+        except (TypeError, ValueError):
+            pass
+        try:
+            self._flight_base_speed_px = max(1, int(data.get("flight_speed_px", self._flight_base_speed_px)))
+        except (TypeError, ValueError):
+            pass
 
     def _save_config(self) -> bool:
-        payload = {"deepseek_api_key": self._api_key}
+        payload = {
+            "deepseek_api_key": self._api_key,
+            "min_jump_distance_px": self._min_jump_distance_px,
+            "flight_speed_px": self._flight_base_speed_px,
+        }
         try:
             self._config_path.parent.mkdir(parents=True, exist_ok=True)
             self._config_path.write_text(
@@ -252,6 +266,7 @@ class Aemeath(QLabel):
         """
         source_music_dir = self.resources_dir / "music"
         target_music_dir = self._resource_container_music_dir()
+        sync_background_files = {"player.jpg", "background.PNG", "background.png"}
         try:
             target_music_dir.mkdir(parents=True, exist_ok=True)
         except OSError:
@@ -262,20 +277,38 @@ class Aemeath(QLabel):
             if not src.is_file():
                 continue
             dst = target_music_dir / src.name
-            if dst.exists():
-                continue
             try:
-                shutil.copy2(src, dst)
+                if not dst.exists():
+                    shutil.copy2(src, dst)
+                    continue
+                # Keep runtime cache fresh for bundled background assets:
+                # if source changed, refresh container copy on startup.
+                if src.name in sync_background_files:
+                    src_stat = src.stat()
+                    dst_stat = dst.stat()
+                    changed = (
+                        src_stat.st_size != dst_stat.st_size
+                        or src_stat.st_mtime_ns > dst_stat.st_mtime_ns
+                    )
+                    if changed:
+                        shutil.copy2(src, dst)
             except OSError:
                 continue
 
     def _show_settings_dialog(self) -> None:
-        dialog = SettingsDialog(api_key=self._api_key, parent=None)
+        dialog = SettingsDialog(
+            api_key=self._api_key,
+            min_jump_distance=self._min_jump_distance_px,
+            flight_speed=self._flight_base_speed_px,
+            parent=None,
+        )
         if dialog.exec() != SettingsDialog.DialogCode.Accepted:
             return
         self._api_key = dialog.api_key()
+        self._min_jump_distance_px = dialog.min_jump_distance()
+        self._flight_base_speed_px = dialog.flight_speed()
         if self._save_config():
-            QMessageBox.information(self, "保存成功", "API Key 已保存，后续将自动读取。")
+            QMessageBox.information(self, "保存成功", "设置已保存，后续将自动读取。")
             return
         QMessageBox.warning(self, "保存失败", "无法写入配置文件，请检查目录权限。")
 
@@ -390,7 +423,7 @@ class Aemeath(QLabel):
             return
         target = self._pick_random_position(
             area=area,
-            min_distance=max(120, int(min(area.width(), area.height()) * 0.18)),
+            min_distance=max(self._min_jump_distance_px, int(min(area.width(), area.height()) * 0.18)),
         )
         if target is None:
             return
@@ -427,7 +460,7 @@ class Aemeath(QLabel):
         area = screen.availableGeometry()
         target = self._pick_random_position(
             area=area,
-            min_distance=max(140, int(min(area.width(), area.height()) * 0.3)),
+            min_distance=max(self._min_jump_distance_px, int(min(area.width(), area.height()) * 0.3)),
         )
         if target is None:
             return
@@ -863,6 +896,7 @@ class Aemeath(QLabel):
                 scaled_h,
             )
             self._transform_restore_fullscreen_mode = False
+        self._hide_windows_for_transform()
         self._pause_music_for_transform()
         self.hide()
         self._transform_window.play_media(
@@ -881,6 +915,7 @@ class Aemeath(QLabel):
         self.show()
         self.raise_()
         self.activateWindow()
+        self._restore_windows_after_transform()
         self._resume_music_after_transform_if_needed()
         if not self._is_hovering:
             self._set_movie(random.choice(self.idle_ids))
@@ -894,6 +929,32 @@ class Aemeath(QLabel):
             "变身播片失败",
             "⚠️Waring：虚质磁暴影响，通讯受阻",
         )
+
+    def _hide_windows_for_transform(self) -> None:
+        state: dict[str, object] = {
+            "chat_visible": False,
+            "music_state": None,
+        }
+        if self._is_widget_alive(self._chat_window) and self._chat_window.isVisible():
+            state["chat_visible"] = True
+            self._chat_window.hide()
+        if self._is_widget_alive(self._music_window):
+            state["music_state"] = self._music_window.capture_visibility_state()
+            self._music_window.hide_for_transform()
+        self._hidden_windows_before_transform = state
+
+    def _restore_windows_after_transform(self) -> None:
+        if not self._hidden_windows_before_transform:
+            return
+        state = self._hidden_windows_before_transform
+        self._hidden_windows_before_transform = {}
+        if bool(state.get("chat_visible", False)) and self._is_widget_alive(self._chat_window):
+            self._chat_window.show()
+            self._chat_window.raise_()
+            self._chat_window.activateWindow()
+        music_state = state.get("music_state")
+        if isinstance(music_state, dict) and self._is_widget_alive(self._music_window):
+            self._music_window.restore_after_transform(music_state)
 
     def _pause_music_for_transform(self) -> None:
         self._resume_music_after_transform = self._is_music_playing()
