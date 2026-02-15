@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Union, cast
 
 from PySide6.QtCore import QPoint, QSettings, QSize, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QColor, QIcon, QKeyEvent, QMouseEvent, QPainter, QPen, QPixmap
+from PySide6.QtGui import QAction, QCloseEvent, QColor, QIcon, QKeyEvent, QMouseEvent, QPainter, QPen, QPixmap, QPainterPath, QRegion
 from PySide6.QtMultimedia import QAudioDevice, QAudioOutput, QMediaPlayer, QMediaDevices, QVideoSink
 from PySide6.QtWidgets import (
     QApplication,
@@ -243,8 +243,8 @@ class MiniCallBar(QDialog):
     @staticmethod
     def _default_theme_tokens() -> dict[str, str]:
         return {
-            "mini_panel_a": "rgba(255, 248, 245, 238)",
-            "mini_panel_b": "rgba(248, 249, 250, 238)",
+            "mini_panel_a": "#ffdfe9",
+            "mini_panel_b": "#ffe7f1",
             "mini_panel_border": "rgba(255, 190, 176, 215)",
             "mini_text": "#4c5b67",
             "mini_focus": "#2f9e67",
@@ -872,20 +872,27 @@ class WithYouWindow(QDialog):
         self._noise_popup.setWindowFlags(
             Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint
         )
-        layout = QVBoxLayout(self._noise_popup)
+        self._noise_popup.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        root = QVBoxLayout(self._noise_popup)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        panel = QFrame(self._noise_popup)
+        panel.setObjectName("noisePopupPanel")
+        layout = QVBoxLayout(panel)
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(8)
-        self._ambient_enabled_cb = QCheckBox("播放噪声（无限循环）", self._noise_popup)
+        self._ambient_enabled_cb = QCheckBox("播放噪声（雪夜炉火）", panel)
         self._ambient_enabled_cb.stateChanged.connect(self._on_ambient_enabled_changed)
         layout.addWidget(self._ambient_enabled_cb)
         vol_row = QHBoxLayout()
-        vol_row.addWidget(QLabel("音量", self._noise_popup))
-        self._ambient_volume_slider = QSlider(Qt.Orientation.Horizontal, self._noise_popup)
+        vol_row.addWidget(QLabel("音量", panel))
+        self._ambient_volume_slider = QSlider(Qt.Orientation.Horizontal, panel)
         self._ambient_volume_slider.setRange(0, 100)
         self._ambient_volume_slider.setValue(50)
         self._ambient_volume_slider.valueChanged.connect(self._on_ambient_volume_changed)
         vol_row.addWidget(self._ambient_volume_slider, 1)
         layout.addLayout(vol_row)
+        root.addWidget(panel)
         self._noise_popup.setStyleSheet(self._build_focus_stylesheet(self._ui_scale()))
 
     def _build_bgm_popup(self) -> None:
@@ -896,48 +903,54 @@ class WithYouWindow(QDialog):
         self._bgm_popup.setWindowFlags(
             Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint
         )
-        layout = QVBoxLayout(self._bgm_popup)
+        self._bgm_popup.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        root = QVBoxLayout(self._bgm_popup)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        panel = QFrame(self._bgm_popup)
+        panel.setObjectName("bgmPopupPanel")
+        layout = QVBoxLayout(panel)
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(8)
-        self._bgm_enabled_cb = QCheckBox("播放 BGM", self._bgm_popup)
+        self._bgm_enabled_cb = QCheckBox("播放 BGM", panel)
         self._bgm_enabled_cb.stateChanged.connect(self._on_bgm_enabled_changed)
         layout.addWidget(self._bgm_enabled_cb)
-        layout.addWidget(QLabel("BGM", self._bgm_popup))
         vol_row = QHBoxLayout()
-        vol_row.addWidget(QLabel("音量", self._bgm_popup))
-        self._bgm_volume_slider = QSlider(Qt.Orientation.Horizontal, self._bgm_popup)
+        vol_row.addWidget(QLabel("音量", panel))
+        self._bgm_volume_slider = QSlider(Qt.Orientation.Horizontal, panel)
         self._bgm_volume_slider.setRange(0, 100)
         self._bgm_volume_slider.setValue(60)
         self._bgm_volume_slider.valueChanged.connect(self._on_bgm_volume_changed)
         vol_row.addWidget(self._bgm_volume_slider, 1)
         layout.addLayout(vol_row)
-        self._bgm_loop_cb = QCheckBox("单曲循环", self._bgm_popup)
+        self._bgm_loop_cb = QCheckBox("单曲循环", panel)
         self._bgm_loop_cb.stateChanged.connect(self._on_bgm_loop_changed)
         layout.addWidget(self._bgm_loop_cb)
-        self._bgm_list = QListWidget(self._bgm_popup)
+        self._bgm_list = QListWidget(panel)
         self._bgm_list.setObjectName("chatTimeline")
         self._bgm_list.setMaximumHeight(px(100, self._ui_scale()))
         self._bgm_list.currentRowChanged.connect(self._on_bgm_list_selection_changed)
         layout.addWidget(self._bgm_list)
-        self._bgm_seek_slider = QSlider(Qt.Orientation.Horizontal, self._bgm_popup)
+        self._bgm_seek_slider = QSlider(Qt.Orientation.Horizontal, panel)
         self._bgm_seek_slider.setRange(0, 0)
         self._bgm_seek_slider.sliderMoved.connect(self._on_bgm_seek_moved)
         self._bgm_seek_slider.sliderPressed.connect(lambda: setattr(self, "_bgm_seek_block", True))
         self._bgm_seek_slider.sliderReleased.connect(lambda: setattr(self, "_bgm_seek_block", False))
         layout.addWidget(self._bgm_seek_slider)
-        self._bgm_time_label = QLabel("0:00 / 0:00", self._bgm_popup)
+        self._bgm_time_label = QLabel("0:00 / 0:00", panel)
         layout.addWidget(self._bgm_time_label)
         ctrl_row = QHBoxLayout()
-        self._bgm_prev_btn = QPushButton("上一首", self._bgm_popup)
+        self._bgm_prev_btn = QPushButton("上一首", panel)
         self._bgm_prev_btn.setObjectName("ghostBtn")
         self._bgm_prev_btn.clicked.connect(self._bgm_prev_track)
-        self._bgm_next_btn = QPushButton("下一首", self._bgm_popup)
+        self._bgm_next_btn = QPushButton("下一首", panel)
         self._bgm_next_btn.setObjectName("ghostBtn")
         self._bgm_next_btn.clicked.connect(self._bgm_next_track)
         ctrl_row.addWidget(self._bgm_prev_btn)
         ctrl_row.addWidget(self._bgm_next_btn)
         ctrl_row.addStretch(1)
         layout.addLayout(ctrl_row)
+        root.addWidget(panel)
         self._bgm_popup.setStyleSheet(self._build_focus_stylesheet(self._ui_scale()))
 
     def _reposition_noise_popup(self) -> None:
@@ -952,11 +965,20 @@ class WithYouWindow(QDialog):
         y = btn_top_right.y() - self._bgm_popup.height() - 4
         self._bgm_popup.move(x, max(0, y))
 
+    @staticmethod
+    def _apply_popup_rounded_mask(widget: QWidget, radius: int = 14) -> None:
+        """圆角窗口遮罩，避免系统绘制直角阴影。"""
+        path = QPainterPath()
+        path.addRoundedRect(widget.rect(), radius, radius)
+        poly = path.toFillPolygon().toPolygon()
+        widget.setMask(QRegion(poly))  # type: ignore[call-arg]
+
     def _open_noise_popup(self) -> None:
         if self._noise_popup.isVisible():
             self._noise_popup.hide()
             return
         self._noise_popup.adjustSize()
+        self._apply_popup_rounded_mask(self._noise_popup)
         self._reposition_noise_popup()
         self._noise_popup.show()
 
@@ -965,6 +987,7 @@ class WithYouWindow(QDialog):
             self._bgm_popup.hide()
             return
         self._bgm_popup.adjustSize()
+        self._apply_popup_rounded_mask(self._bgm_popup)
         self._reposition_bgm_popup()
         self._bgm_popup.show()
 
@@ -1093,9 +1116,9 @@ class WithYouWindow(QDialog):
         return {
             "bg_dialog": "#0f141b",
             "text_light": "#e6edf3",
-            "panel_grad_a": "#161d27",
-            "panel_grad_b": "#131922",
-            "panel_border": "#283342",
+            "panel_grad_a": "rgba(15, 20, 27, 0.6)",
+            "panel_grad_b": "rgba(200, 131, 156, 0.6)",
+            "panel_border": "rgba(40, 51, 66, 0.6)",
             "settings_bg": "#eef2f6",
             "status_text": "#f1f5f9",
             "round_text": "#c4d0df",
@@ -1103,13 +1126,13 @@ class WithYouWindow(QDialog):
             "settings_text": "#16212c",
             "unit_text": "#253342",
             "divider": "#c6d0db",
-            "card_bg_a": "#ffffff",
-            "card_bg_b": "#f7f9fb",
-            "card_border": "#c8d3df",
-            "countdown": "#ff6b6b",
-            "input_bg": "#ffffff",
+            "card_bg_a": "rgba(245, 218, 227, 0.5)",
+            "card_bg_b": "rgba(247, 249, 251, 0.5)",
+            "card_border": "rgba(200, 211, 223, 0.5)",
+            "countdown": "#b5c9d9",
+            "input_bg": "#f5dae3",
             "input_border": "#b5c4d2",
-            "input_focus": "#ff9e8b",
+            "input_focus": "#b5c9d9",
             "input_focus_bg": "#fffaf7",
             "btn_pink_top": "#fff5f9",
             "btn_pink_bottom": "#ffe7f1",
@@ -1118,7 +1141,7 @@ class WithYouWindow(QDialog):
             "btn_pink_hover_top": "#fff9fc",
             "btn_pink_hover_bottom": "#ffedf5",
             "text_dark": "#111111",
-            "font_family": '"思源黑体-Bold", "Source Han Sans SC", "PingFang SC"',
+            "font_family":" 'Source Han Sans SC', 'PingFang SC'",
             "mini_panel_a": "rgba(255, 248, 245, 238)",
             "mini_panel_b": "rgba(248, 249, 250, 238)",
             "mini_panel_border": "rgba(255, 190, 176, 215)",
@@ -1143,9 +1166,9 @@ class WithYouWindow(QDialog):
             "mini_danger_hover_b": "#ffe8f0",
             "mini_danger_pressed_a": "#ffe8f1",
             "mini_danger_pressed_b": "#ffdbe8",
-            "focus_bg_cream": "rgba(255, 242, 238, 0.96)",
+            "focus_bg_cream": "#fdf0f4",
             "macaron_pink": "#e8a0b0",
-            "popup_bg": "rgba(255, 242, 238, 0.92)",
+            "popup_bg": "rgba(253, 240, 245, 230)",
         }
 
     def _build_focus_stylesheet(self, scale: float) -> str:
@@ -1155,19 +1178,23 @@ class WithYouWindow(QDialog):
                 background: {t["bg_dialog"]};
                 color: {t["text_light"]};
             }}
+            QDialog#noisePopup, QDialog#bgmPopup {{
+                background: transparent;
+                border: none;
+            }}
             QDialog[viewMode="focus"] {{
                 background: {t["focus_bg_cream"]};
             }}
-            QDialog#noisePopup, QDialog#bgmPopup {{
+            QFrame#noisePopupPanel, QFrame#bgmPopupPanel {{
                 background: {t["popup_bg"]};
                 border: 1px solid {t["card_border"]};
                 border-radius: 14px;
                 border-image: none;
             }}
-            QDialog#noisePopup QLabel, QDialog#bgmPopup QLabel {{
+            QFrame#noisePopupPanel QLabel, QFrame#bgmPopupPanel QLabel {{
                 color: {t["macaron_pink"]};
             }}
-            QDialog#noisePopup QCheckBox, QDialog#bgmPopup QCheckBox {{
+            QFrame#noisePopupPanel QCheckBox, QFrame#bgmPopupPanel QCheckBox {{
                 color: {t["macaron_pink"]};
             }}
             QDialog[viewMode="config"] {{
@@ -1383,6 +1410,14 @@ class WithYouWindow(QDialog):
         self._sfx_player.stop()
         self._stop_ambient()
         self._stop_bgm()
+
+    def _stop_transition_playback(self) -> None:
+        """Stop only cinematic/video/sfx playback, keep ambient+BGM running."""
+        self._loop_video = False
+        self._player.stop()
+        self._player.setSource(QUrl())
+        self._current_media_source = ""
+        self._sfx_player.stop()
 
     def _play_start_sfx(self) -> None:
         if self._start_sfx_path is None:
@@ -1780,11 +1815,11 @@ class WithYouWindow(QDialog):
 
     def handle_escape_animation(self) -> bool:
         if self._phase == "answering":
-            self._stop_all_playback()
+            self._stop_transition_playback()
             self._enter_config()
             return True
         if self._start_intro_playing and self._phase == "running" and not self._is_break_phase:
-            self._stop_all_playback()
+            self._stop_transition_playback()
             self._start_intro_playing = False
             self._set_interactive_mode()
             self._middle_stack.setCurrentWidget(self._withyou_panel)
@@ -1793,7 +1828,7 @@ class WithYouWindow(QDialog):
                 self._play_media(self._withyou_path, loop=True)
             return True
         if self._break_intro_playing and self._phase == "running" and self._is_break_phase:
-            self._stop_all_playback()
+            self._stop_transition_playback()
             self._break_intro_playing = False
             self._set_interactive_mode()
             self._middle_stack.setCurrentWidget(self._withyou_panel)
@@ -1802,12 +1837,12 @@ class WithYouWindow(QDialog):
                 self._play_media(self._withyou_path, loop=True)
             return True
         if self._end_outro_playing:
-            self._stop_all_playback()
+            self._stop_transition_playback()
             self._end_outro_playing = False
             self._enter_config(preserve_progress=False)
             return True
         if self._phase == "hangup":
-            self._stop_all_playback()
+            self._stop_transition_playback()
             self._enter_config(preserve_progress=False)
             return True
         return False
