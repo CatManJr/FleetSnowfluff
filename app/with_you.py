@@ -455,6 +455,8 @@ class WithYouWindow(QDialog):
 
         self.setWindowTitle("专注通话")
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.Tool)
+        self.setObjectName("withYouWindow")
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.resize(375, 812)  # 5.8-inch class
         self.setFixedSize(375, 812)
 
@@ -1116,19 +1118,22 @@ class WithYouWindow(QDialog):
         return {
             "bg_dialog": "#0f141b",
             "text_light": "#e6edf3",
-            "panel_grad_a": "rgba(15, 20, 27, 0.6)",
-            "panel_grad_b": "rgba(200, 131, 156, 0.6)",
-            "panel_border": "rgba(40, 51, 66, 0.6)",
+            "panel_grad_a": "rgba(15, 20, 27, 1)",
+            "panel_grad_b": "rgba(200, 131, 156, 1)",
+            "panel_border": "rgba(40, 51, 66, 1)",
             "settings_bg": "#eef2f6",
+            "focus_window_bg": "rgba(253, 240, 244, 1)",
+            "config_window_bg": "rgba(238, 242, 246, 1)",
+            "settings_panel_bg": "rgba(238, 242, 246, 1)",
             "status_text": "#f1f5f9",
             "round_text": "#c4d0df",
             "tip_text": "#18222d",
             "settings_text": "#16212c",
             "unit_text": "#253342",
             "divider": "#c6d0db",
-            "card_bg_a": "rgba(245, 218, 227, 0.5)",
-            "card_bg_b": "rgba(247, 249, 251, 0.5)",
-            "card_border": "rgba(200, 211, 223, 0.5)",
+            "card_bg_a": "rgba(245, 218, 227, 1)",
+            "card_bg_b": "rgba(247, 249, 251, 1)",
+            "card_border": "rgba(200, 211, 223, 1)",
             "countdown": "#b5c9d9",
             "input_bg": "#f5dae3",
             "input_border": "#b5c4d2",
@@ -1182,8 +1187,8 @@ class WithYouWindow(QDialog):
                 background: transparent;
                 border: none;
             }}
-            QDialog[viewMode="focus"] {{
-                background: {t["focus_bg_cream"]};
+            QDialog#withYouWindow[viewMode="focus"] {{
+                background: {t["focus_window_bg"]};
             }}
             QFrame#noisePopupPanel, QFrame#bgmPopupPanel {{
                 background: {t["popup_bg"]};
@@ -1197,27 +1202,27 @@ class WithYouWindow(QDialog):
             QFrame#noisePopupPanel QCheckBox, QFrame#bgmPopupPanel QCheckBox {{
                 color: {t["macaron_pink"]};
             }}
-            QDialog[viewMode="config"] {{
-                background: {t["settings_bg"]};
+            QDialog#withYouWindow[viewMode="config"] {{
+                background: {t["config_window_bg"]};
                 color: {t["settings_text"]};
             }}
             QLabel#statusLabel, QLabel#roundLabel, QLabel#countdownLabel, QPushButton {{
                 font-family: {t["font_family"]};
             }}
-            QFrame#topBar, QFrame#bottomBar {{
+            QDialog#withYouWindow QFrame#topBar, QDialog#withYouWindow QFrame#bottomBar {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {t["panel_grad_a"]}, stop:1 {t["panel_grad_b"]});
                 border-bottom: 1px solid {t["panel_border"]};
             }}
-            QDialog[viewMode="config"] QFrame#topBar, QDialog[viewMode="config"] QFrame#bottomBar {{
+            QDialog#withYouWindow[viewMode="config"] QFrame#topBar, QDialog#withYouWindow[viewMode="config"] QFrame#bottomBar {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ffffff, stop:1 #f4f7fa);
                 border-bottom: 1px solid {t["card_border"]};
             }}
-            QFrame#settingsPanel {{ background: {t["settings_bg"]}; }}
-            QFrame#bottomBar {{
+            QDialog#withYouWindow QFrame#settingsPanel {{ background: {t["settings_panel_bg"]}; }}
+            QDialog#withYouWindow QFrame#bottomBar {{
                 border-bottom: none;
                 border-top: 1px solid {t["panel_border"]};
             }}
-            QDialog[viewMode="config"] QFrame#bottomBar {{
+            QDialog#withYouWindow[viewMode="config"] QFrame#bottomBar {{
                 border-top: 1px solid {t["card_border"]};
             }}
             QLabel#statusLabel {{ font-size: {px(17, scale)}px; font-weight: 700; color: {t["status_text"]}; }}
