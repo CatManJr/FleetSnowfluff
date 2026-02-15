@@ -5,10 +5,12 @@ import re
 from difflib import SequenceMatcher
 from datetime import datetime
 from pathlib import Path
+from typing import Any, cast
 
 from PySide6.QtCore import QObject, QSize, Qt, QThread, Signal
-from PySide6.QtGui import QIcon, QImage, QPixmap
+from PySide6.QtGui import QCloseEvent, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QFrame,
     QHBoxLayout,
@@ -21,6 +23,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from .with_you import WithYouWindow
 
 
 class ChatWorker(QObject):
@@ -48,7 +52,7 @@ class ChatWorker(QObject):
             model = "deepseek-reasoner" if self.reasoning_enabled else "deepseek-chat"
             response = client.chat.completions.create(
                 model=model,
-                messages=self.messages,
+                messages=cast(Any, self.messages),
                 temperature=self.temperature,
             )
             answer = response.choices[0].message.content if response.choices else ""
@@ -140,6 +144,7 @@ class ChatWindow(QDialog):
         self._api_key_getter = api_key_getter
         self._reasoning_enabled_getter = reasoning_enabled_getter or (lambda: False)
         self._icon_path = icon_path
+        self._resources_dir = icon_path.parent if icon_path is not None else config_dir.parent
         self._send_icon_path = None
         if icon_path is not None:
             send_icon_dir = icon_path.parent
@@ -156,6 +161,8 @@ class ChatWindow(QDialog):
         self._pending_index: int | None = None
         self._pending_timestamp: str = ""
         self._pending_prompt: str = ""
+        self._with_you_window: WithYouWindow | None = None
+        self._is_closing = False
 
         self.setWindowTitle("飞讯")
         self.setWindowFlags(
@@ -163,7 +170,7 @@ class ChatWindow(QDialog):
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.Tool
         )
-        self.resize(390, 760)
+        self.resize(375, 812)
         self._build_ui()
         self._load_history()
         self._render_records()
@@ -232,6 +239,7 @@ class ChatWindow(QDialog):
         title.setObjectName("navTitle")
         subtitle = QLabel("在线")
         subtitle.setObjectName("navSubtitle")
+        self._nav_subtitle = subtitle
         title_box.addWidget(title)
         title_box.addWidget(subtitle)
         nav_layout.addWidget(avatar_wrap)
@@ -240,9 +248,13 @@ class ChatWindow(QDialog):
         self.log_button = QPushButton("记录", self)
         self.log_button.setObjectName("navActionButton")
         self.log_button.clicked.connect(self._show_history_viewer)
+        self.call_button = QPushButton("通话", self)
+        self.call_button.setObjectName("navActionButton")
+        self.call_button.clicked.connect(self._open_with_you)
         self.clear_button = QPushButton("清空", self)
         self.clear_button.setObjectName("navActionButton")
         self.clear_button.clicked.connect(self._clear_history)
+        nav_layout.addWidget(self.call_button)
         nav_layout.addWidget(self.log_button)
         nav_layout.addWidget(self.clear_button)
 
@@ -263,30 +275,34 @@ class ChatWindow(QDialog):
         input_layout = QHBoxLayout(input_frame)
         input_layout.setContentsMargins(10, 8, 10, 8)
         input_layout.setSpacing(8)
+        input_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        row_height = 52
 
         self.input_box = ChatInputBox(input_frame)
         self.input_box.setPlaceholderText("输入...（暂只支持文本）")
         self.input_box.setObjectName("composerInput")
-        self.input_box.setFixedHeight(52)
+        self.input_box.setMinimumHeight(row_height)
+        self.input_box.setMaximumHeight(row_height)
         self.input_box.submitRequested.connect(self._send_message)
 
         self.send_button = QPushButton(input_frame)
         self.send_button.setObjectName("sendButton")
-        self.send_button.setFixedSize(52, 52)
+        self.send_button.setMinimumSize(row_height, row_height)
+        self.send_button.setMaximumSize(row_height, row_height)
         self.send_button.setToolTip("发送")
         if self._send_icon_path is not None and self._send_icon_path.exists():
             send_icon = self._load_send_icon(self._send_icon_path)
             if send_icon is not None:
                 self.send_button.setIcon(send_icon)
-                self.send_button.setIconSize(QSize(46, 46))
+                self.send_button.setIconSize(QSize(52, 52))
             else:
                 self.send_button.setText("✈")
         else:
             self.send_button.setText("✈")
         self.send_button.clicked.connect(self._send_message)
 
-        input_layout.addWidget(self.input_box, 1)
-        input_layout.addWidget(self.send_button)
+        input_layout.addWidget(self.input_box, 1, Qt.AlignmentFlag.AlignVCenter)
+        input_layout.addWidget(self.send_button, 0, Qt.AlignmentFlag.AlignVCenter)
 
         root.addWidget(nav)
         root.addWidget(chat_frame, 1)
@@ -524,7 +540,9 @@ class ChatWindow(QDialog):
             self.send_button.setDisabled(False)
             self.input_box.setReadOnly(False)
             return
-        self._pending_index = self._add_chat_bubble("assistant", "用户输入中...", self._pending_timestamp, pending=True)
+        reasoning_enabled = bool(self._reasoning_enabled_getter())
+        pending_text = "用户思考中..." if reasoning_enabled else "用户输入中..."
+        self._pending_index = self._add_chat_bubble("assistant", pending_text, self._pending_timestamp, pending=True)
 
         messages = self._build_context_messages(prompt)
         temperature = self._choose_temperature(prompt)
@@ -534,7 +552,7 @@ class ChatWindow(QDialog):
             api_key=api_key,
             messages=messages,
             temperature=temperature,
-            reasoning_enabled=bool(self._reasoning_enabled_getter()),
+            reasoning_enabled=reasoning_enabled,
         )
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
@@ -676,3 +694,40 @@ class ChatWindow(QDialog):
         if self._thread is not None:
             self._thread.deleteLater()
             self._thread = None
+
+    def _open_with_you(self) -> None:
+        if self._with_you_window is None:
+            self._with_you_window = WithYouWindow(resources_dir=self._resources_dir, parent=None)
+            self._with_you_window.chatRequested.connect(self._show_chat_during_call)
+            self._with_you_window.callStarted.connect(self._on_call_started)
+            self._with_you_window.callEnded.connect(self._on_call_ended)
+        self._with_you_window.open_call()
+
+    def _set_call_status(self, in_call: bool) -> None:
+        if hasattr(self, "_nav_subtitle"):
+            self._nav_subtitle.setText("通话中" if in_call else "在线")
+
+    def _on_call_started(self) -> None:
+        self._set_call_status(True)
+        self.hide()
+
+    def _show_chat_during_call(self) -> None:
+        self._set_call_status(True)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _on_call_ended(self) -> None:
+        if self._is_closing:
+            return
+        self._set_call_status(False)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        app = QApplication.instance()
+        self._is_closing = bool(app is not None and app.closingDown())
+        if self._is_closing and self._with_you_window is not None:
+            self._with_you_window.close()
+        super().closeEvent(event)

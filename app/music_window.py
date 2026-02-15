@@ -649,8 +649,13 @@ class MiniPlayerBar(QDialog):
         self._playlist_panel.set_tracks(tracks=tracks, current_track=self._current_track_fn())
         panel_width = min(max(420, self.width()), 620)
         self._playlist_panel.resize(panel_width, 300)
-        anchor = self.playlist_button.mapToGlobal(QPoint(0, self.playlist_button.height() + 6))
-        self._playlist_panel.move(anchor.x() - panel_width + self.playlist_button.width(), anchor.y())
+        self._place_popup_near_button(
+            popup=self._playlist_panel,
+            button=self.playlist_button,
+            prefer_above=False,
+            align_right=True,
+            gap=6,
+        )
         self._playlist_panel.show()
         self._playlist_panel.raise_()
 
@@ -674,12 +679,50 @@ class MiniPlayerBar(QDialog):
             self.volume_popup.hide()
             return
         self._sync_volume_ui(self._get_volume_percent_fn())
-        anchor = self.volume_button.mapToGlobal(QPoint(0, 0))
-        x = anchor.x() + (self.volume_button.width() - self.volume_popup.width()) // 2
-        y = anchor.y() - self.volume_popup.height() - 6
-        self.volume_popup.move(x, y)
+        self._place_popup_near_button(
+            popup=self.volume_popup,
+            button=self.volume_button,
+            prefer_above=True,
+            align_right=False,
+            gap=6,
+        )
         self.volume_popup.show()
         self.volume_popup.raise_()
+
+    def _place_popup_near_button(
+        self,
+        popup: QWidget,
+        button: QWidget,
+        *,
+        prefer_above: bool,
+        align_right: bool,
+        gap: int = 6,
+    ) -> None:
+        popup_w = popup.width()
+        popup_h = popup.height()
+        top_left = button.mapToGlobal(QPoint(0, 0))
+        btn_w = button.width()
+        btn_h = button.height()
+        screen = QGuiApplication.screenAt(top_left) or QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        area = screen.availableGeometry()
+        x_centered = top_left.x() + (btn_w - popup_w) // 2
+        x_left = top_left.x()
+        x_right_aligned = top_left.x() + btn_w - popup_w
+        x = x_right_aligned if align_right else x_centered
+        x = max(area.left(), min(x, area.right() - popup_w + 1))
+
+        y_above = top_left.y() - popup_h - gap
+        y_below = top_left.y() + btn_h + gap
+        fits_above = y_above >= area.top()
+        fits_below = y_below + popup_h <= area.bottom() + 1
+        if prefer_above:
+            y = y_above if fits_above or not fits_below else y_below
+        else:
+            y = y_below if fits_below or not fits_above else y_above
+        y = max(area.top(), min(y, area.bottom() - popup_h + 1))
+        popup.move(x, y)
 
     def has_custom_position(self) -> bool:
         return self._has_custom_pos
@@ -1533,12 +1576,50 @@ class MusicWindow(QDialog):
             self.volume_popup.hide()
             return
         self._sync_volume_ui(self._get_volume_percent_fn())
-        anchor = self.volume_button.mapToGlobal(QPoint(0, 0))
-        x = anchor.x() + (self.volume_button.width() - self.volume_popup.width()) // 2
-        y = anchor.y() - self.volume_popup.height() - 6
-        self.volume_popup.move(x, y)
+        self._place_popup_near_button(
+            popup=self.volume_popup,
+            button=self.volume_button,
+            prefer_above=True,
+            align_right=False,
+            gap=6,
+        )
         self.volume_popup.show()
         self.volume_popup.raise_()
+
+    def _place_popup_near_button(
+        self,
+        popup: QWidget,
+        button: QWidget,
+        *,
+        prefer_above: bool,
+        align_right: bool,
+        gap: int = 6,
+    ) -> None:
+        popup_w = popup.width()
+        popup_h = popup.height()
+        top_left = button.mapToGlobal(QPoint(0, 0))
+        btn_w = button.width()
+        btn_h = button.height()
+        screen = QGuiApplication.screenAt(top_left) or QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        area = screen.availableGeometry()
+
+        x_centered = top_left.x() + (btn_w - popup_w) // 2
+        x_right_aligned = top_left.x() + btn_w - popup_w
+        x = x_right_aligned if align_right else x_centered
+        x = max(area.left(), min(x, area.right() - popup_w + 1))
+
+        y_above = top_left.y() - popup_h - gap
+        y_below = top_left.y() + btn_h + gap
+        fits_above = y_above >= area.top()
+        fits_below = y_below + popup_h <= area.bottom() + 1
+        if prefer_above:
+            y = y_above if fits_above or not fits_below else y_below
+        else:
+            y = y_below if fits_below or not fits_above else y_above
+        y = max(area.top(), min(y, area.bottom() - popup_h + 1))
+        popup.move(x, y)
 
     def _update_progress_ui(self, force: bool = False) -> None:
         duration = max(0, int(self._get_duration_ms_fn()))
