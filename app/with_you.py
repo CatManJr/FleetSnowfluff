@@ -449,14 +449,17 @@ class WithYouWindow(QDialog):
         self._bgm_dir = self._call_dir / "bgm"
         self._noise_path: Path | None = self._first_audio_in_dir(self._noise_dir)
         self._with_you_settings = QSettings("FleetSnowfluff", "WithYou")
+        self._config_opacity = self._load_config_opacity()
         self._bgm_playlist: list[str] = []
         self._bgm_index = 0
         self._bgm_seek_block = False
+        self._bgm_resume_position_ms = 0
+        self._bgm_pending_seek_ms = 0
 
         self.setWindowTitle("专注通话")
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.Tool)
         self.setObjectName("withYouWindow")
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
         self.resize(375, 812)  # 5.8-inch class
         self.setFixedSize(375, 812)
 
@@ -478,6 +481,7 @@ class WithYouWindow(QDialog):
 
         # Interactive page: top/middle/bottom three bands
         self._interactive_page = QFrame(self)
+        self._interactive_page.setObjectName("interactivePage")
         interactive_root = QVBoxLayout(self._interactive_page)
         interactive_root.setContentsMargins(0, 0, 0, 0)
         interactive_root.setSpacing(0)
@@ -632,6 +636,28 @@ class WithYouWindow(QDialog):
         settings_rows.addWidget(rounds_card, 1)
         settings_rows.addWidget(focus_card, 1)
         settings_rows.addWidget(break_card, 1)
+        opacity_card = QFrame(self._settings_panel)
+        opacity_card.setObjectName("settingCard")
+        opacity_card_layout = QVBoxLayout(opacity_card)
+        opacity_card_layout.setContentsMargins(10, 8, 10, 8)
+        opacity_card_layout.setSpacing(6)
+        opacity_label = QLabel("设置窗口透明度")
+        opacity_label.setObjectName("settingFieldLabel")
+        opacity_row = QHBoxLayout()
+        opacity_row.setContentsMargins(0, 0, 0, 0)
+        opacity_row.setSpacing(6)
+        self._config_opacity_slider = QSlider(Qt.Orientation.Horizontal, self._settings_panel)
+        self._config_opacity_slider.setRange(80, 100)
+        self._config_opacity_slider.setValue(self._config_opacity)
+        self._config_opacity_slider.valueChanged.connect(self._on_config_opacity_changed)
+        self._config_opacity_value_label = QLabel(f"{self._config_opacity}%")
+        self._config_opacity_value_label.setObjectName("settingFieldLabel")
+        self._config_opacity_value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        opacity_row.addWidget(self._config_opacity_slider, 1)
+        opacity_row.addWidget(self._config_opacity_value_label)
+        opacity_card_layout.addWidget(opacity_label)
+        opacity_card_layout.addLayout(opacity_row)
+        settings_rows.addWidget(opacity_card, 1)
 
         self.start_btn = QPushButton("开始专注")
         self.start_btn.setObjectName("primaryBtn")
@@ -660,6 +686,7 @@ class WithYouWindow(QDialog):
         self._settings_scroll.setWidget(self._settings_panel)
 
         self._withyou_panel = QFrame(self._interactive_page)
+        self._withyou_panel.setObjectName("withyouPanel")
         withyou_layout = QVBoxLayout(self._withyou_panel)
         withyou_layout.setContentsMargins(0, 0, 0, 0)
         self._withyou_video = QLabel(self._withyou_panel)
@@ -829,6 +856,14 @@ class WithYouWindow(QDialog):
         except (TypeError, ValueError):
             pass
         self._bgm_index = max(0, min(len(self._bgm_playlist) - 1, idx_int))
+        pos_raw = self._with_you_settings.value("bgm/position_ms", 0)
+        pos_int = 0
+        try:
+            if pos_raw is not None:
+                pos_int = int(cast(Union[int, str], pos_raw))
+        except (TypeError, ValueError):
+            pos_int = 0
+        self._bgm_resume_position_ms = max(0, pos_int)
         if self._bgm_playlist:
             self._bgm_list.blockSignals(True)
             self._bgm_list.setCurrentRow(self._bgm_index)
@@ -839,6 +874,25 @@ class WithYouWindow(QDialog):
         self._with_you_settings.setValue("bgm/volume", self._bgm_volume_slider.value())
         self._with_you_settings.setValue("bgm/loop", self._bgm_loop_cb.isChecked())
         self._with_you_settings.setValue("bgm/index", self._bgm_index)
+        current_pos = self._bgm_player.position()
+        self._with_you_settings.setValue("bgm/position_ms", max(0, current_pos if current_pos > 0 else self._bgm_resume_position_ms))
+
+    def _load_config_opacity(self) -> int:
+        raw = self._with_you_settings.value("window/config_opacity", 100)
+        value = 100
+        try:
+            if raw is not None:
+                value = int(cast(Union[int, str], raw))
+        except (TypeError, ValueError):
+            value = 100
+        return max(80, min(100, value))
+
+    def _on_config_opacity_changed(self, value: int) -> None:
+        self._config_opacity = max(80, min(100, int(value)))
+        self._config_opacity_value_label.setText(f"{self._config_opacity}%")
+        self._with_you_settings.setValue("window/config_opacity", self._config_opacity)
+        if self.property("viewMode") == "config":
+            self.setWindowOpacity(self._config_opacity / 100.0)
 
     def _on_ambient_enabled_changed(self, _state: int) -> None:
         self._save_ambient_state()
@@ -1007,9 +1061,13 @@ class WithYouWindow(QDialog):
 
     def _on_bgm_media_status_changed(self, status) -> None:
         if status == QMediaPlayer.MediaStatus.LoadedMedia:
+            if self._bgm_pending_seek_ms > 0:
+                self._bgm_player.setPosition(self._bgm_pending_seek_ms)
+                self._bgm_pending_seek_ms = 0
             self._bgm_player.play()
         elif status == QMediaPlayer.MediaStatus.EndOfMedia:
             if self._bgm_loop_cb.isChecked():
+                self._bgm_resume_position_ms = 0
                 self._bgm_player.setPosition(0)
                 self._bgm_player.play()
             else:
@@ -1017,12 +1075,13 @@ class WithYouWindow(QDialog):
                 if next_idx != self._bgm_index:
                     self._bgm_index = next_idx
                     self._bgm_list.setCurrentRow(self._bgm_index)
-                    self._bgm_play_index(self._bgm_index)
+                    self._bgm_play_index(self._bgm_index, start_position_ms=0)
                 else:
+                    self._bgm_resume_position_ms = 0
                     self._bgm_player.setPosition(0)
                     self._bgm_player.play()
 
-    def _bgm_play_index(self, index: int) -> None:
+    def _bgm_play_index(self, index: int, *, start_position_ms: int = 0) -> None:
         if index < 0 or index >= len(self._bgm_playlist):
             self._stop_bgm()
             return
@@ -1031,6 +1090,8 @@ class WithYouWindow(QDialog):
             return
         path = self._bgm_playlist[index]
         self._bgm_audio.setVolume(self._bgm_volume_slider.value() / 100.0)
+        self._bgm_pending_seek_ms = max(0, start_position_ms)
+        self._bgm_resume_position_ms = self._bgm_pending_seek_ms
         self._bgm_player.stop()
         self._bgm_player.setSource(QUrl())
         self._bgm_player.setSource(QUrl.fromLocalFile(path))
@@ -1061,10 +1122,14 @@ class WithYouWindow(QDialog):
             return
         self._bgm_index = row
         self._with_you_settings.setValue("bgm/index", row)
+        self._bgm_resume_position_ms = 0
+        self._with_you_settings.setValue("bgm/position_ms", 0)
         if self._phase == "running":
-            self._bgm_play_index(self._bgm_index)
+            self._bgm_play_index(self._bgm_index, start_position_ms=0)
 
     def _on_bgm_seek_moved(self, position: int) -> None:
+        self._bgm_resume_position_ms = max(0, position)
+        self._with_you_settings.setValue("bgm/position_ms", self._bgm_resume_position_ms)
         self._bgm_player.setPosition(position)
 
     def _bgm_prev_track(self) -> None:
@@ -1073,7 +1138,9 @@ class WithYouWindow(QDialog):
         self._bgm_index = (self._bgm_index - 1) % len(self._bgm_playlist)
         self._bgm_list.setCurrentRow(self._bgm_index)
         self._with_you_settings.setValue("bgm/index", self._bgm_index)
-        self._bgm_play_index(self._bgm_index)
+        self._bgm_resume_position_ms = 0
+        self._with_you_settings.setValue("bgm/position_ms", 0)
+        self._bgm_play_index(self._bgm_index, start_position_ms=0)
 
     def _bgm_next_track(self) -> None:
         if not self._bgm_playlist:
@@ -1081,11 +1148,15 @@ class WithYouWindow(QDialog):
         self._bgm_index = (self._bgm_index + 1) % len(self._bgm_playlist)
         self._bgm_list.setCurrentRow(self._bgm_index)
         self._with_you_settings.setValue("bgm/index", self._bgm_index)
-        self._bgm_play_index(self._bgm_index)
+        self._bgm_resume_position_ms = 0
+        self._with_you_settings.setValue("bgm/position_ms", 0)
+        self._bgm_play_index(self._bgm_index, start_position_ms=0)
 
     def _on_bgm_position_changed(self, position: int) -> None:
         if getattr(self, "_bgm_seek_block", False):
             return
+        self._bgm_resume_position_ms = max(0, position)
+        self._with_you_settings.setValue("bgm/position_ms", self._bgm_resume_position_ms)
         self._bgm_seek_slider.setMaximum(max(self._bgm_player.duration(), 1))
         self._bgm_seek_slider.setValue(position)
         d = self._bgm_player.duration()
@@ -1098,9 +1169,11 @@ class WithYouWindow(QDialog):
         if not self._bgm_enabled_cb.isChecked() or not self._bgm_playlist:
             return
         self._bgm_index = min(self._bgm_index, len(self._bgm_playlist) - 1)
-        self._bgm_play_index(self._bgm_index)
+        self._bgm_play_index(self._bgm_index, start_position_ms=self._bgm_resume_position_ms)
 
     def _stop_bgm(self) -> None:
+        self._bgm_resume_position_ms = max(0, self._bgm_player.position())
+        self._with_you_settings.setValue("bgm/position_ms", self._bgm_resume_position_ms)
         self._bgm_player.stop()
         self._bgm_player.setSource(QUrl())
         self._bgm_seek_slider.setRange(0, 0)
@@ -1113,11 +1186,11 @@ class WithYouWindow(QDialog):
             "text_light": "#e6edf3",
             "panel_grad_a": "rgba(15, 20, 27, 1)",
             "panel_grad_b": "rgba(200, 131, 156, 1)",
-            "panel_border": "rgba(40, 51, 66, 1)",
+            "panel_border": "#ffffff",
             "settings_bg": "#eef2f6",
-            "focus_window_bg": "rgba(253, 240, 244, 1)",
-            "config_window_bg": "rgba(238, 242, 246, 1)",
-            "settings_panel_bg": "#e79384",
+            "focus_window_bg": "#fdf0f4",
+            "config_window_bg": "#eef2f6",
+            "settings_panel_bg": "#ffeadc",
             "status_text": "#f1f5f9",
             "round_text": "#c4d0df",
             "tip_text": "#18222d",
@@ -1126,12 +1199,12 @@ class WithYouWindow(QDialog):
             "divider": "#c6d0db",
             "card_bg_a": "rgba(245, 218, 227, 1)",
             "card_bg_b": "rgba(247, 249, 251, 1)",
-            "card_border": "rgba(200, 211, 223, 1)",
+            "card_border": "#ffffff",
             "countdown": "#b5c9d9",
-            "input_bg": "#f5dae3",
-            "input_border": "#b5c4d2",
-            "input_focus": "#b5c9d9",
-            "input_focus_bg": "#fffaf7",
+            "input_bg": "rgba(245, 218, 227, 0.45)",
+            "input_border": "rgba(255, 255, 255, 0.36)",
+            "input_focus": "rgba(255, 255, 255, 0.62)",
+            "input_focus_bg": "rgba(255, 250, 247, 0.62)",
             "btn_pink_top": "#fff5f9",
             "btn_pink_bottom": "#ffe7f1",
             "btn_pink_border": "#e7bfd1",
@@ -1166,7 +1239,7 @@ class WithYouWindow(QDialog):
             "mini_danger_pressed_b": "#ffdbe8",
             "focus_bg_cream": "#fdf0f4",
             "macaron_pink": "#e8a0b0",
-            "popup_bg": "rgba(253, 240, 245, 230)",
+            "popup_bg": "#fdf0f5",
         }
 
     def _build_focus_stylesheet(self, scale: float) -> str:
@@ -1181,7 +1254,7 @@ class WithYouWindow(QDialog):
                 border: none;
             }}
             QDialog#withYouWindow {{
-                background: transparent;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {t["panel_grad_a"]}, stop:1 {t["panel_grad_b"]});
                 border: none;
             }}
             QFrame#noisePopupPanel, QFrame#bgmPopupPanel {{
@@ -1202,30 +1275,15 @@ class WithYouWindow(QDialog):
             QLabel#statusLabel, QLabel#roundLabel, QLabel#countdownLabel, QPushButton {{
                 font-family: {t["font_family"]};
             }}
-            QDialog#withYouWindow QFrame#topBar, QDialog#withYouWindow QFrame#bottomBar {{
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {t["panel_grad_a"]}, stop:1 {t["panel_grad_b"]});
-                border-bottom: 1px solid {t["panel_border"]};
-            }}
-            QDialog#withYouWindow[viewMode="config"] QFrame#topBar, QDialog#withYouWindow[viewMode="config"] QFrame#bottomBar {{
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ffffff, stop:1 #f4f7fa);
-                border-bottom: 1px solid {t["card_border"]};
-            }}
-            QDialog#withYouWindow QScrollArea#settingsScroll {{
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {t["panel_grad_a"]}, stop:1 {t["panel_grad_b"]});
+            QDialog#withYouWindow QFrame#interactivePage,
+            QDialog#withYouWindow QFrame#topBar,
+            QDialog#withYouWindow QFrame#bottomBar,
+            QDialog#withYouWindow QScrollArea#settingsScroll,
+            QDialog#withYouWindow QScrollArea#settingsScroll > QWidget#qt_scrollarea_viewport,
+            QDialog#withYouWindow QFrame#settingsContentPanel,
+            QDialog#withYouWindow QFrame#withyouPanel {{
+                background: transparent;
                 border: none;
-            }}
-            QDialog#withYouWindow QScrollArea#settingsScroll > QWidget#qt_scrollarea_viewport {{
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {t["panel_grad_a"]}, stop:1 {t["panel_grad_b"]});
-            }}
-            QDialog#withYouWindow QFrame#settingsContentPanel {{
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {t["panel_grad_a"]}, stop:1 {t["panel_grad_b"]});
-            }}
-            QDialog#withYouWindow QFrame#bottomBar {{
-                border-bottom: none;
-                border-top: 1px solid {t["panel_border"]};
-            }}
-            QDialog#withYouWindow[viewMode="config"] QFrame#bottomBar {{
-                border-top: 1px solid {t["card_border"]};
             }}
             QLabel#statusLabel {{ font-size: {px(17, scale)}px; font-weight: 700; color: {t["status_text"]}; }}
             QLabel#roundLabel {{ font-size: {px(32, scale)}px; font-weight: 700; color: {t["round_text"]}; }}
@@ -1322,6 +1380,12 @@ class WithYouWindow(QDialog):
         if style is not None:
             style.unpolish(self)
             style.polish(self)
+        if mode == "focus":
+            self.setWindowOpacity(1.0)
+        elif mode == "config":
+            self.setWindowOpacity(self._config_opacity / 100.0)
+        else:
+            self.setWindowOpacity(1.0)
         self.update()
 
     def open_call(self) -> None:
