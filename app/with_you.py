@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import random
+import sys
 import time
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QSize, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QCloseEvent, QIcon, QKeyEvent, QMouseEvent, QPainter, QPen, QPixmap
+from PySide6.QtGui import QAction, QCloseEvent, QIcon, QKeyEvent, QMouseEvent, QPainter, QPen, QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
 from PySide6.QtWidgets import (
     QApplication,
@@ -13,11 +14,13 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSizePolicy,
     QSpinBox,
     QStackedWidget,
+    QSystemTrayIcon,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
@@ -162,6 +165,9 @@ class MiniCallBar(QDialog):
             | Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        if sys.platform == "darwin":
+            # Keep tool windows visible across Spaces/fullscreen scenes on macOS.
+            self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
         self.setFixedSize(260, 92)
 
         root = QHBoxLayout(self)
@@ -286,6 +292,11 @@ class MiniCallBar(QDialog):
             self._drag_offset = None
         super().mouseReleaseEvent(event)
 
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() == Qt.Key.Key_Escape:
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
 class WithYouWindow(QDialog):
     callStarted = Signal()
@@ -308,6 +319,9 @@ class WithYouWindow(QDialog):
         self._withyou_width = 1440
         self._withyou_height = 1790
         self._mini_bar: MiniCallBar | None = None
+        self._status_tray: QSystemTrayIcon | None = None
+        self._status_tray_menu: QMenu | None = None
+        self._status_tray_stage_action: QAction | None = None
         self._call_active = False
         self._is_break_phase = False
         self._is_paused = False
@@ -638,6 +652,11 @@ class WithYouWindow(QDialog):
                 font-size: %dpx;
                 color: #8d365d;
             }
+            QCheckBox {
+                color: #c13c83;
+                font-size: %dpx;
+                font-weight: 700;
+            }
             QLabel#settingFieldLabel {
                 font-size: %dpx;
                 color: #7f3154;
@@ -729,6 +748,7 @@ class WithYouWindow(QDialog):
                 px(17, scale),
                 px(32, scale),
                 px(13, scale),
+                px(26, scale),
                 px(14, scale),
                 px(28, scale),
                 px(28, scale),
@@ -1006,6 +1026,7 @@ class WithYouWindow(QDialog):
         self.countdown_label.setText(text)
         if self._mini_bar is not None:
             self._mini_bar.set_countdown(text)
+        self._update_status_tray_state()
 
     def _sync_middle_height(self) -> None:
         if self._withyou_width <= 0 or self._withyou_height <= 0:
@@ -1161,6 +1182,40 @@ class WithYouWindow(QDialog):
         self._note_window.raise_()
         self._note_window.activateWindow()
 
+    def handle_escape_animation(self) -> bool:
+        if self._phase == "answering":
+            self._stop_all_playback()
+            self._enter_config()
+            return True
+        if self._start_intro_playing and self._phase == "running" and not self._is_break_phase:
+            self._stop_all_playback()
+            self._start_intro_playing = False
+            self._set_interactive_mode()
+            self._middle_stack.setCurrentWidget(self._withyou_panel)
+            self._active_video_label = self._withyou_video
+            if self._withyou_path is not None:
+                self._play_media(self._withyou_path, loop=True)
+            return True
+        if self._break_intro_playing and self._phase == "running" and self._is_break_phase:
+            self._stop_all_playback()
+            self._break_intro_playing = False
+            self._set_interactive_mode()
+            self._middle_stack.setCurrentWidget(self._withyou_panel)
+            self._active_video_label = self._withyou_video
+            if self._withyou_path is not None:
+                self._play_media(self._withyou_path, loop=True)
+            return True
+        if self._end_outro_playing:
+            self._stop_all_playback()
+            self._end_outro_playing = False
+            self._enter_config(preserve_progress=False)
+            return True
+        if self._phase == "hangup":
+            self._stop_all_playback()
+            self._enter_config(preserve_progress=False)
+            return True
+        return False
+
     def _ensure_mini_bar(self) -> MiniCallBar:
         if self._mini_bar is None:
             self._mini_bar = MiniCallBar(parent=None)
@@ -1181,15 +1236,102 @@ class WithYouWindow(QDialog):
             bar.move(x, y)
             bar.show()
             bar.raise_()
+        self._set_status_tray_visible(True)
         self.hide()
 
     def _exit_mini_mode(self) -> None:
         if self._mini_bar is not None and self._mini_bar.isVisible():
             self._mini_bar.hide()
+        self._set_status_tray_visible(False)
         self.showNormal()
         self.show()
         self.raise_()
         self.activateWindow()
+
+    def _ensure_status_tray(self) -> QSystemTrayIcon | None:
+        if self._status_tray is not None:
+            return self._status_tray
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return None
+
+        tray = QSystemTrayIcon(self)
+        tray.setToolTip("专注计时器（点击展开）")
+
+        icon = self._load_icon(("icon.webp", "icon.png", "icon.PNG"))
+        if icon is None or icon.isNull():
+            root_icon = self._resources_dir / "icon.webp"
+            if root_icon.exists():
+                icon = QIcon(str(root_icon))
+        if icon is not None and not icon.isNull():
+            tray.setIcon(icon)
+
+        menu = QMenu()
+        stage_action = QAction("当前环节：设置中 · 00:00", menu)
+        stage_action.setEnabled(False)
+        expand_action = QAction("展开计时器", menu)
+        expand_action.triggered.connect(self._exit_mini_mode)
+        chat_action = QAction("打开聊天窗口", menu)
+        chat_action.triggered.connect(self._request_chat_window)
+        hangup_action = QAction("结束通话", menu)
+        hangup_action.triggered.connect(self._start_hangup)
+        menu.addAction(stage_action)
+        menu.addSeparator()
+        menu.addAction(expand_action)
+        menu.addAction(chat_action)
+        menu.addSeparator()
+        menu.addAction(hangup_action)
+        tray.setContextMenu(menu)
+        tray.activated.connect(self._on_status_tray_activated)
+
+        self._status_tray = tray
+        self._status_tray_menu = menu
+        self._status_tray_stage_action = stage_action
+        self._update_status_tray_state()
+        return tray
+
+    def _set_status_tray_visible(self, visible: bool) -> None:
+        tray = self._ensure_status_tray()
+        if tray is None:
+            return
+        if visible:
+            self._update_status_tray_state()
+            tray.show()
+        else:
+            tray.hide()
+
+    def _on_status_tray_activated(self, reason) -> None:
+        # Keep tray icon passive: no auto-expand on click.
+        _ = reason
+
+    def _current_stage_and_countdown(self) -> tuple[str, str]:
+        stage = "通话中"
+        if self._phase == "running":
+            if self._is_paused:
+                stage = "已暂停"
+            elif self._is_break_phase:
+                stage = "休息中"
+            else:
+                stage = "专注中"
+        elif self._phase == "config":
+            stage = "设置中"
+        elif self._phase == "hangup":
+            stage = "结束中"
+        countdown = self.countdown_label.text() if hasattr(self, "countdown_label") else "00:00"
+        return stage, countdown
+
+    def call_stage_line(self) -> str | None:
+        if not self._call_active:
+            return None
+        stage, countdown = self._current_stage_and_countdown()
+        return f"{stage} · {countdown}"
+
+    def _update_status_tray_state(self) -> None:
+        stage, countdown = self._current_stage_and_countdown()
+        line = f"{stage} · {countdown}"
+        if self._status_tray_stage_action is not None:
+            self._status_tray_stage_action.setText(f"当前环节：{line}")
+        if self._status_tray is not None:
+            self._status_tray.setToolTip(f"专注计时器：{line}")
 
     def _request_chat_window(self) -> None:
         self.chatRequested.emit()
@@ -1238,6 +1380,7 @@ class WithYouWindow(QDialog):
 
     def _update_mini_bar_state(self) -> None:
         if self._mini_bar is None:
+            self._update_status_tray_state()
             return
         if self._phase == "running":
             if self._is_paused:
@@ -1252,6 +1395,7 @@ class WithYouWindow(QDialog):
             self._mini_bar.set_status("结束中")
         else:
             self._mini_bar.set_status("通话中")
+        self._update_status_tray_state()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -1260,52 +1404,25 @@ class WithYouWindow(QDialog):
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Escape:
-            if self._phase == "answering":
-                self._stop_all_playback()
-                self._enter_config()
+            if self.handle_escape_animation():
                 event.accept()
                 return
-            if self._start_intro_playing and self._phase == "running" and not self._is_break_phase:
-                self._stop_all_playback()
-                self._start_intro_playing = False
-                self._set_interactive_mode()
-                self._middle_stack.setCurrentWidget(self._withyou_panel)
-                self._active_video_label = self._withyou_video
-                if self._withyou_path is not None:
-                    self._play_media(self._withyou_path, loop=True)
-                event.accept()
-                return
-            if self._break_intro_playing and self._phase == "running" and self._is_break_phase:
-                self._stop_all_playback()
-                self._break_intro_playing = False
-                self._set_interactive_mode()
-                self._middle_stack.setCurrentWidget(self._withyou_panel)
-                self._active_video_label = self._withyou_video
-                if self._withyou_path is not None:
-                    self._play_media(self._withyou_path, loop=True)
-                event.accept()
-                return
-            if self._end_outro_playing:
-                self._stop_all_playback()
-                self._end_outro_playing = False
-                self._enter_config(preserve_progress=False)
-                event.accept()
-                return
-            if self._phase == "hangup":
-                self._stop_all_playback()
-                self.close()
-                event.accept()
-                return
+            # Keep ESC from closing dialogs/windows.
+            event.accept()
+            return
         super().keyPressEvent(event)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        was_call_active = self._call_active
         self._tick.stop()
         self._stop_all_playback()
+        self._call_active = False
         if self._mini_bar is not None and self._mini_bar.isVisible():
             self._mini_bar.close()
+        if self._status_tray is not None:
+            self._status_tray.hide()
         if self._note_window is not None and self._note_window.isVisible():
             self._note_window.close()
-        if self._call_active:
-            self._call_active = False
+        if was_call_active:
             self.callEnded.emit()
         super().closeEvent(event)

@@ -932,11 +932,24 @@ class ChatWindow(QDialog):
 
     def _open_with_you(self) -> None:
         if self._with_you_window is None:
-            self._with_you_window = WithYouWindow(resources_dir=self._resources_dir, parent=None)
+            self._with_you_window = WithYouWindow(
+                resources_dir=self._resources_dir,
+                parent=None,
+            )
             self._with_you_window.chatRequested.connect(self._show_chat_during_call)
             self._with_you_window.callStarted.connect(self._on_call_started)
             self._with_you_window.callEnded.connect(self._on_call_ended)
         self._with_you_window.open_call()
+
+    def focus_call_stage_line(self) -> str | None:
+        if self._with_you_window is None:
+            return None
+        return self._with_you_window.call_stage_line()
+
+    def handle_focus_escape_animation(self) -> bool:
+        if self._with_you_window is None:
+            return False
+        return self._with_you_window.handle_escape_animation()
 
     def _set_call_status(self, in_call: bool) -> None:
         if hasattr(self, "_nav_subtitle"):

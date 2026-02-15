@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QSettings, QSize, Qt, QTimer, QUrl
-from PySide6.QtGui import QCursor, QGuiApplication, QMouseEvent, QMovie, QPixmap, QTransform
+from PySide6.QtGui import QAction, QCursor, QGuiApplication, QIcon, QMouseEvent, QMovie, QPixmap, QTransform
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
-from PySide6.QtWidgets import QApplication, QFileDialog, QLabel, QMenu, QMessageBox
+from PySide6.QtWidgets import QApplication, QFileDialog, QLabel, QMenu, QMessageBox, QSystemTrayIcon
 
 try:
     from shiboken6 import isValid as shiboken_is_valid
@@ -51,6 +51,7 @@ class Aemeath(QLabel):
         self._seal_widgets: list[SealWidget] = []
         self._terminal_open = False
         self._visibility_suppressed = False
+        self._focus_hide_mascot_enabled = False
         self._last_fullscreen_state = False
         self._last_fullscreen_checked_at = 0.0
         self._chat_window: ChatWindow | None = None
@@ -66,6 +67,11 @@ class Aemeath(QLabel):
         self._resume_music_after_transform = False
         self._supported_music_exts = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
         self._runtime_settings = QSettings("FleetSnowfluff", "Aemeath")
+        # Product requirement: always start with global hide OFF each launch.
+        self._reset_focus_hide_mascot_on_startup()
+        self._tray_icon: QSystemTrayIcon | None = None
+        self._tray_focus_action: QAction | None = None
+        self._focus_menu: QMenu | None = None
 
         self._movies = {}
         self._load_movies()
@@ -100,6 +106,7 @@ class Aemeath(QLabel):
         self.idle_switch_timer.start()
 
         self._load_config()
+        self._focus_hide_mascot_enabled = self._load_focus_hide_mascot_enabled()
         self._ensure_resource_container()
         self._setup_audio()
         self._setup_menu()
@@ -621,6 +628,29 @@ class Aemeath(QLabel):
     def _persist_music_volume_percent(self, volume_percent: int) -> None:
         self._runtime_settings.setValue("audio/music_volume_percent", max(0, min(100, int(volume_percent))))
 
+    def _load_focus_hide_mascot_enabled(self) -> bool:
+        raw = self._runtime_settings.value("focus/hide_mascot_enabled", False)
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, (int, float)):
+            return bool(raw)
+        if isinstance(raw, str):
+            return raw.strip().lower() in {"1", "true", "yes", "on"}
+        return False
+
+    def _reset_focus_hide_mascot_on_startup(self) -> None:
+        self._runtime_settings.setValue("focus/hide_mascot_enabled", False)
+        self._focus_hide_mascot_enabled = False
+
+    def _set_focus_hide_mascot_enabled(self, enabled: bool) -> None:
+        self._focus_hide_mascot_enabled = bool(enabled)
+        self._runtime_settings.setValue("focus/hide_mascot_enabled", self._focus_hide_mascot_enabled)
+        self._refresh_menu_labels()
+        # Fast path for manual toggle: apply visibility from cached state immediately,
+        # then reconcile with external probes on the next event-loop tick.
+        self._sync_terminal_visibility(refresh_external_state=False)
+        QTimer.singleShot(0, self._sync_terminal_visibility)
+
     def _setup_menu(self) -> None:
         self._menu = QMenu(self)
         app = QApplication.instance()
@@ -655,16 +685,41 @@ class Aemeath(QLabel):
         self._chat_action = self._menu.addAction("打开飞讯")
         self._transform_action = self._menu.addAction("爱弥斯，变身！")
         self._hacker_action = self._menu.addAction("电子幽灵登场！")
-        self._seal_action = self._menu.addAction("")
         self._music_action = self._menu.addAction("你看，又唱")
+        self._focus_status_action = self._menu.addAction("")
+        self._focus_status_action.setEnabled(False)
+        self._focus_status_action.setVisible(False)
+        self._focus_menu = self._menu.addMenu("浮游星海")
+        self._seal_action = self._focus_menu.addAction("")
+        self._tray_focus_action = self._focus_menu.addAction("")
         self._exit_action = self._menu.addAction("拜拜～")
 
         self._chat_action.triggered.connect(self._chat_with_xiaoai)
         self._transform_action.triggered.connect(self._transform_emis)
         self._hacker_action.triggered.connect(self._launch_hacker_terminal)
         self._seal_action.triggered.connect(self._toggle_seals)
+        self._tray_focus_action.triggered.connect(self._toggle_focus_hide_mascot)
         self._music_action.triggered.connect(self._play_random_music)
         self._exit_action.triggered.connect(self._quit_app)
+        self._menu.aboutToShow.connect(self._refresh_menu_labels)
+        self._setup_tray_icon()
+        self._refresh_menu_labels()
+
+    def _setup_tray_icon(self) -> None:
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        self._tray_icon = QSystemTrayIcon(self)
+        icon_path = self.resources_dir / "icon.webp"
+        if icon_path.exists():
+            icon = QIcon(str(icon_path))
+            if not icon.isNull():
+                self._tray_icon.setIcon(icon)
+        self._tray_icon.setToolTip("飞行雪绒：主控菜单")
+        self._tray_icon.setContextMenu(self._menu)
+        self._tray_icon.show()
+
+    def _toggle_focus_hide_mascot(self) -> None:
+        self._set_focus_hide_mascot_enabled(not self._focus_hide_mascot_enabled)
 
     def _setup_terminal_monitor(self) -> None:
         # Initialize with current state to avoid hiding immediately
@@ -683,13 +738,18 @@ class Aemeath(QLabel):
             seal.show()
             seal.raise_()
 
-    def _sync_terminal_visibility(self) -> None:
-        terminal_open = self._is_terminal_open()
-        fullscreen_open = self._is_foreground_fullscreen_cached()
-        terminal_just_opened = terminal_open and not self._terminal_open
-        self._terminal_open = terminal_open
+    def _sync_terminal_visibility(self, refresh_external_state: bool = True) -> None:
+        if refresh_external_state:
+            terminal_open = self._is_terminal_open()
+            fullscreen_open = self._is_foreground_fullscreen_cached()
+            terminal_just_opened = terminal_open and not self._terminal_open
+            self._terminal_open = terminal_open
+        else:
+            terminal_open = self._terminal_open
+            fullscreen_open = self._last_fullscreen_state
+            terminal_just_opened = False
 
-        should_hide = terminal_open or fullscreen_open
+        should_hide = terminal_open or fullscreen_open or self._focus_hide_mascot_enabled
         if should_hide == self._visibility_suppressed:
             if terminal_just_opened:
                 self._print_terminal_greeting()
@@ -866,6 +926,22 @@ class Aemeath(QLabel):
     def _refresh_menu_labels(self) -> None:
         self._sync_seal_state()
         self._seal_action.setText("拜拜海豹" if self._seal_widgets else "召唤雪绒海豹")
+        focus_line: str | None = None
+        chat_window = self._chat_window
+        if self._is_widget_alive(chat_window) and chat_window is not None:
+            focus_line = chat_window.focus_call_stage_line()
+        if self._focus_status_action is not None:
+            if focus_line:
+                self._focus_status_action.setText(f"当前环节：{focus_line}")
+                self._focus_status_action.setVisible(True)
+            else:
+                self._focus_status_action.setVisible(False)
+        if self._tray_focus_action is not None:
+            self._tray_focus_action.setText(
+                "回来吧飞行雪绒"
+                if self._focus_hide_mascot_enabled
+                else "隐藏飞行雪绒"
+            )
 
     def _show_menu(self, global_pos: QPoint) -> None:
         self._refresh_menu_labels()
@@ -1319,6 +1395,8 @@ class Aemeath(QLabel):
 
     def _quit_app(self) -> None:
         self._is_shutting_down = True
+        # Reset global hide preference for next launch (default OFF).
+        self._runtime_settings.setValue("focus/hide_mascot_enabled", False)
         self._stop_flight()
         if self.idle_switch_timer.isActive():
             self.idle_switch_timer.stop()
@@ -1335,6 +1413,8 @@ class Aemeath(QLabel):
             music_window.close()
         self._music_window = None
         self._clear_seals()
+        if self._tray_icon is not None:
+            self._tray_icon.hide()
         self.close()
         app = QApplication.instance()
         if app is not None:
@@ -1342,18 +1422,35 @@ class Aemeath(QLabel):
 
     def closeEvent(self, event) -> None:
         self._is_shutting_down = True
+        # Reset global hide preference for next launch (default OFF).
+        self._runtime_settings.setValue("focus/hide_mascot_enabled", False)
         if self.idle_switch_timer.isActive():
             self.idle_switch_timer.stop()
         self._stop_flight()
+        if self._tray_icon is not None:
+            self._tray_icon.hide()
         super().closeEvent(event)
 
     def eventFilter(self, watched, event) -> bool:
+        if event.type() == QEvent.Type.ShortcutOverride and event.key() == Qt.Key.Key_Escape:
+            # Also consume shortcut-override ESC to prevent QDialog default reject.
+            event.accept()
+            return True
         if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
             transform_window = self._transform_window
             if self._is_widget_alive(transform_window) and transform_window is not None and transform_window.isVisible():
+                # ESC exits transform animation, but should not close the app.
                 transform_window.close()
                 event.accept()
                 return True
+            chat_window = self._chat_window
+            if self._is_widget_alive(chat_window) and chat_window is not None:
+                if chat_window.handle_focus_escape_animation():
+                    event.accept()
+                    return True
+            # Global policy: block ESC-driven window close/exit elsewhere.
+            event.accept()
+            return True
         return super().eventFilter(watched, event)
 
     def enterEvent(self, event) -> None:
