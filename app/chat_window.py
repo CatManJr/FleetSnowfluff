@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
-from PySide6.QtCore import QObject, QSize, Qt, QThread, Signal
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, QThread, Signal
 from PySide6.QtGui import QCloseEvent, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from .with_you import WithYouWindow
+from .ui_scale import current_app_scale, px
 
 
 class ChatWorker(QObject):
@@ -178,6 +179,13 @@ class ChatWindow(QDialog):
         self._load_history()
         self._render_records()
 
+    def _ui_scale(self) -> float:
+        app = QApplication.instance()
+        return current_app_scale(app) if app is not None else 1.0
+
+    def _px(self, value: int) -> int:
+        return px(value, self._ui_scale())
+
     @staticmethod
     def _load_send_icon(icon_path: Path) -> QIcon | None:
         image = QImage(str(icon_path))
@@ -201,6 +209,7 @@ class ChatWindow(QDialog):
         return QIcon(pixmap)
 
     def _build_ui(self) -> None:
+        scale = self._ui_scale()
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
@@ -279,7 +288,7 @@ class ChatWindow(QDialog):
         input_layout.setContentsMargins(10, 8, 10, 8)
         input_layout.setSpacing(8)
         input_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        row_height = 52
+        row_height = px(52, scale)
 
         self.input_box = ChatInputBox(input_frame)
         self.input_box.setPlaceholderText("输入...（暂只支持文本）")
@@ -297,7 +306,7 @@ class ChatWindow(QDialog):
             send_icon = self._load_send_icon(self._send_icon_path)
             if send_icon is not None:
                 self.send_button.setIcon(send_icon)
-                self.send_button.setIconSize(QSize(52, 52))
+                self.send_button.setIconSize(QSize(row_height, row_height))
             else:
                 self.send_button.setText("✈")
         else:
@@ -311,17 +320,22 @@ class ChatWindow(QDialog):
         root.addWidget(chat_frame, 1)
         root.addWidget(input_frame)
 
+        self._apply_scaled_stylesheet(scale)
+
+    def _apply_scaled_stylesheet(self, scale: float | None = None) -> None:
+        scale = self._ui_scale() if scale is None else scale
+        btn = px(52, scale)
         self.setStyleSheet(
-            """
-            QDialog {
+            f"""
+            QDialog {{
                 background: #fff7fb;
                 color: #2a1f2a;
-            }
-            QFrame#navBar {
+            }}
+            QFrame#navBar {{
                 background: #ffffff;
                 border-bottom: 1px solid #ffd3e6;
-            }
-            QLabel#avatarBadge {
+            }}
+            QLabel#avatarBadge {{
                 min-width: 42px;
                 min-height: 42px;
                 max-width: 42px;
@@ -332,8 +346,8 @@ class ChatWindow(QDialog):
                 font-weight: 700;
                 qproperty-alignment: AlignCenter;
                 border: 2px solid #ffc2de;
-            }
-            QLabel#onlineDot {
+            }}
+            QLabel#onlineDot {{
                 min-width: 12px;
                 min-height: 12px;
                 max-width: 12px;
@@ -341,50 +355,50 @@ class ChatWindow(QDialog):
                 border-radius: 6px;
                 background: #30d158;
                 border: 2px solid #ffffff;
-            }
-            QLabel#navTitle {
-                font-size: 18px;
+            }}
+            QLabel#navTitle {{
+                font-size: {px(18, scale)}px;
                 font-weight: 700;
                 color: #221626;
-            }
-            QLabel#navSubtitle {
-                font-size: 12px;
+            }}
+            QLabel#navSubtitle {{
+                font-size: {px(12, scale)}px;
                 color: #9a6b85;
-            }
-            QPushButton#navActionButton {
+            }}
+            QPushButton#navActionButton {{
                 background: #fff0f7;
                 border: 2px solid #ff9dc6;
                 border-radius: 10px;
                 color: #8d365d;
                 padding: 4px 8px;
-                font-size: 15px;
-            }
-            QFrame#panelCard {
+                font-size: {px(15, scale)}px;
+            }}
+            QFrame#panelCard {{
                 background: #fff7fb;
                 border: none;
-            }
-            QListWidget#chatTimeline {
+            }}
+            QListWidget#chatTimeline {{
                 background: #fff7fb;
                 border: none;
                 color: #2a1f2a;
-            }
-            QFrame#composerBar {
+            }}
+            QFrame#composerBar {{
                 background: #ffffff;
                 border-top: 1px solid #ffd3e6;
-            }
-            QPlainTextEdit#composerInput {
+            }}
+            QPlainTextEdit#composerInput {{
                 background: #fff2f8;
                 border: 2px solid #ffb3d4;
                 border-radius: 16px;
                 padding: 8px;
                 color: #2a1f2a;
-                font-size: 16px;
-            }
-            QPushButton#sendButton {
-                min-width: 52px;
-                max-width: 52px;
-                min-height: 52px;
-                max-height: 52px;
+                font-size: {px(16, scale)}px;
+            }}
+            QPushButton#sendButton {{
+                min-width: {btn}px;
+                max-width: {btn}px;
+                min-height: {btn}px;
+                max-height: {btn}px;
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
                     stop:0 #ff5fa2,
@@ -394,14 +408,14 @@ class ChatWindow(QDialog):
                 border-radius: 16px;
                 color: #ffffff;
                 font-weight: 600;
-                font-size: 20px;
+                font-size: {px(20, scale)}px;
                 padding: 0px;
-            }
-            QPushButton:disabled {
+            }}
+            QPushButton:disabled {{
                 background: #f3dbe8;
                 border-color: #e8bfd3;
                 color: #a68596;
-            }
+            }}
             """
         )
 
@@ -419,7 +433,7 @@ class ChatWindow(QDialog):
         side_layout.setSpacing(4)
 
         time_label = QLabel(ts, side)
-        time_label.setStyleSheet("color:#9ba3c7; font-size:11px;")
+        time_label.setStyleSheet(f"color:#9ba3c7; font-size:{self._px(11)}px;")
         if role == "user":
             time_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         else:
@@ -430,13 +444,13 @@ class ChatWindow(QDialog):
         bubble_layout = QVBoxLayout(bubble)
         bubble_layout.setContentsMargins(12, 10, 12, 10)
         bubble_layout.setSpacing(4)
-        bubble.setMaximumWidth(300)
+        bubble.setMaximumWidth(self._px(300))
 
         body = QLabel(text, bubble)
         body.setWordWrap(True)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         body.setStyleSheet(
-            "font-size: 14px; "
+            f"font-size: {self._px(14)}px; "
             "background: transparent; border: none; margin: 0; padding: 0;"
         )
 
@@ -945,6 +959,24 @@ class ChatWindow(QDialog):
         self.show()
         self.raise_()
         self.activateWindow()
+
+    def _refresh_scaled_ui(self) -> None:
+        scale = self._ui_scale()
+        row_height = px(52, scale)
+        if hasattr(self, "input_box"):
+            self.input_box.setMinimumHeight(row_height)
+            self.input_box.setMaximumHeight(row_height)
+        if hasattr(self, "send_button"):
+            self.send_button.setMinimumSize(row_height, row_height)
+            self.send_button.setMaximumSize(row_height, row_height)
+            if not self.send_button.icon().isNull():
+                self.send_button.setIconSize(QSize(row_height, row_height))
+        self._apply_scaled_stylesheet(scale)
+
+    def event(self, event) -> bool:
+        if event.type() == QEvent.Type.ScreenChangeInternal:
+            self._refresh_scaled_ui()
+        return super().event(event)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         app = QApplication.instance()

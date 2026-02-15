@@ -11,6 +11,7 @@ from PySide6.QtGui import QFont, QFontDatabase, QIcon
 from PySide6.QtWidgets import QApplication
 
 from app.aemeath import Aemeath
+from app.ui_scale import install_app_scale_controller
 
 
 def _resolve_resources_dir() -> Path:
@@ -73,7 +74,8 @@ def main() -> None:
     app.setApplicationDisplayName("Fleet Snowfluff")
     app.setQuitOnLastWindowClosed(False)
     resources_dir = _resolve_resources_dir()
-    app.setFont(_pick_app_font(resources_dir))
+    base_font = _pick_app_font(resources_dir)
+    install_app_scale_controller(app, base_font)
     app.setStyleSheet(
         """
         QMessageBox {

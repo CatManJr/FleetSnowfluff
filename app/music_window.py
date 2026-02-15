@@ -20,6 +20,7 @@ from PySide6.QtGui import (
     QPixmap,
 )
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QFrame,
     QHeaderView,
@@ -36,6 +37,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from .ui_scale import current_app_scale, px
 
 
 class TrackInfo(NamedTuple):
@@ -56,6 +59,18 @@ def _load_icon_from_candidates(icon_dir: Path | None, filenames: tuple[str, ...]
         if not icon.isNull():
             return icon
     return None
+
+
+def _mirrored_icon(icon: QIcon) -> QIcon | None:
+    if icon.isNull():
+        return None
+    sizes = icon.availableSizes()
+    base_size = sizes[0] if sizes else QSize(64, 64)
+    pixmap = icon.pixmap(base_size)
+    if pixmap.isNull():
+        return None
+    mirrored = pixmap.toImage().mirrored(True, False)
+    return QIcon(QPixmap.fromImage(mirrored))
 
 
 class PlaylistTreeWidget(QTreeWidget):
@@ -183,8 +198,16 @@ class MiniPlaylistPanel(QDialog):
         card_layout.addWidget(self.list_widget, 1)
         root.addWidget(card)
 
-        self.setStyleSheet(
-            """
+        self._apply_scaled_stylesheet()
+
+    def _ui_scale(self) -> float:
+        return current_app_scale(QApplication.instance())
+
+    def _px(self, value: int) -> int:
+        return px(value, self._ui_scale())
+
+    def _apply_scaled_stylesheet(self) -> None:
+        style = """
             QFrame#playlistCard {
                 background: rgba(255, 247, 251, 0.97);
                 border: 2px solid #ffc2de;
@@ -196,14 +219,14 @@ class MiniPlaylistPanel(QDialog):
                 padding: 6px 8px;
                 background: #fff8fc;
                 color: #6c2e4e;
-                font-size: 12px;
+                font-size: __FS12__px;
             }
             QListWidget#playlistList {
                 border: 1px solid #ffd3e6;
                 border-radius: 10px;
                 background: #ffffff;
                 color: #2a1f2a;
-                font-size: 12px;
+                font-size: __FS12__px;
                 padding: 3px;
             }
             QListWidget#playlistList::item {
@@ -215,7 +238,12 @@ class MiniPlaylistPanel(QDialog):
                 color: #8d365d;
             }
             """
-        )
+        self.setStyleSheet(style.replace("__FS12__", str(self._px(12))))
+
+    def event(self, event) -> bool:
+        if event.type() == QEvent.Type.ScreenChangeInternal:
+            self._apply_scaled_stylesheet()
+        return super().event(event)
 
     def set_tracks(self, tracks: list[Path], current_track: Path | None) -> None:
         self._entries = [(track, self._extract_track_info_fn(track)) for track in tracks]
@@ -394,9 +422,27 @@ class MiniPlayerBar(QDialog):
         )
 
         self.container.setGraphicsEffect(None)
+        self._apply_scaled_ui()
+        self._progress_timer = QTimer(self)
+        self._progress_timer.setInterval(220)
+        self._progress_timer.timeout.connect(self._update_progress_ui)
+        self._progress_timer.start()
+        self._restore_saved_position()
+        self.set_keep_on_top(True)
+        self._load_button_icons()
 
-        self.setStyleSheet(
-            """
+    def _ui_scale(self) -> float:
+        return current_app_scale(QApplication.instance())
+
+    def _px(self, value: int) -> int:
+        return px(value, self._ui_scale())
+
+    def _apply_scaled_ui(self) -> None:
+        scale = self._ui_scale()
+        popup_w = px(54, scale)
+        popup_h = px(170, scale)
+        self.volume_popup.resize(popup_w, popup_h)
+        style = """
             QDialog {
                 background: transparent;
                 border: none;
@@ -414,7 +460,7 @@ class MiniPlayerBar(QDialog):
             }
             QLabel#miniTitle {
                 color: #6a2f4f;
-                font-size: 14px;
+                font-size: __FS14__px;
                 font-weight: 700;
                 padding: 2px 7px;
                 background: qlineargradient(
@@ -426,13 +472,13 @@ class MiniPlayerBar(QDialog):
                 border-radius: 9px;
             }
             QPushButton#miniBtn {
-                min-width: 56px;
-                max-width: 56px;
-                min-height: 48px;
-                max-height: 48px;
+                min-width: __MINIBTN_W__px;
+                max-width: __MINIBTN_W__px;
+                min-height: __MINIBTN_H__px;
+                max-height: __MINIBTN_H__px;
                 border-radius: 14px;
                 color: #5d1f3f;
-                font-size: 24px;
+                font-size: __FS24__px;
                 border: none;
                 background: transparent;
             }
@@ -448,13 +494,13 @@ class MiniPlayerBar(QDialog):
                 background: transparent;
             }
             QPushButton#miniBtnExpand {
-                min-width: 50px;
-                max-width: 50px;
-                min-height: 50px;
-                max-height: 50px;
+                min-width: __MINIEXP__px;
+                max-width: __MINIEXP__px;
+                min-height: __MINIEXP__px;
+                max-height: __MINIEXP__px;
                 border-radius: 14px;
                 color: #4f1935;
-                font-size: 25px;
+                font-size: __FS25__px;
                 border: none;
                 background: transparent;
             }
@@ -471,7 +517,7 @@ class MiniPlayerBar(QDialog):
             }
             QLabel#miniVolumeValue {
                 color: #8d365d;
-                font-size: 11px;
+                font-size: __FS11__px;
                 font-weight: 700;
             }
             QSlider#miniVolumeSlider::groove:vertical {
@@ -523,21 +569,23 @@ class MiniPlayerBar(QDialog):
                 background: rgba(255, 247, 252, 0.96);
             }
             """
+        style = (
+            style.replace("__FS11__", str(px(11, scale)))
+            .replace("__FS14__", str(px(14, scale)))
+            .replace("__FS24__", str(px(24, scale)))
+            .replace("__FS25__", str(px(25, scale)))
+            .replace("__MINIBTN_W__", str(px(56, scale)))
+            .replace("__MINIBTN_H__", str(px(48, scale)))
+            .replace("__MINIEXP__", str(px(50, scale)))
         )
-        self._progress_timer = QTimer(self)
-        self._progress_timer.setInterval(220)
-        self._progress_timer.timeout.connect(self._update_progress_ui)
-        self._progress_timer.start()
-        self._restore_saved_position()
-        self.set_keep_on_top(True)
-        self._load_button_icons()
+        self.setStyleSheet(style)
 
     def _load_button_icons(self) -> None:
+        icon_size = self._px(24)
         icon_specs = {
-            "prev": ("prev.png", "previous.png", "ic_prev.png"),
             "play": ("play.png", "ic_play.png"),
             "pause": ("pause.png", "ic_pause.png"),
-            "next": ("next.png", "ic_next.png"),
+            "next": ("skip.png", "next.png", "ic_next.png"),
             "playlist": ("playlist.png", "list.png", "menu.png", "ic_playlist.png"),
             "volume": ("volume.png", "ic_volume.png"),
             "expand": ("expand.png", "exitfull.png", "ic_expand.png"),
@@ -546,30 +594,39 @@ class MiniPlayerBar(QDialog):
             icon = _load_icon_from_candidates(self._icon_dir, filenames)
             if icon is not None:
                 self._icons[key] = icon
+        next_icon = self._icons.get("next")
+        if next_icon is not None:
+            prev_icon = _mirrored_icon(next_icon)
+            if prev_icon is not None:
+                self._icons["prev"] = prev_icon
+        if "prev" not in self._icons:
+            fallback_prev = _load_icon_from_candidates(self._icon_dir, ("prev.png", "previous.png", "ic_prev.png"))
+            if fallback_prev is not None:
+                self._icons["prev"] = fallback_prev
 
         if "prev" in self._icons:
             self.prev_button.setIcon(self._icons["prev"])
-            self.prev_button.setIconSize(QSize(24, 24))
+            self.prev_button.setIconSize(QSize(icon_size, icon_size))
         else:
             self.prev_button.setText("⏮")
         if "next" in self._icons:
             self.next_button.setIcon(self._icons["next"])
-            self.next_button.setIconSize(QSize(24, 24))
+            self.next_button.setIconSize(QSize(icon_size, icon_size))
         else:
             self.next_button.setText("⏭")
         if "playlist" in self._icons:
             self.playlist_button.setIcon(self._icons["playlist"])
-            self.playlist_button.setIconSize(QSize(24, 24))
+            self.playlist_button.setIconSize(QSize(icon_size, icon_size))
         else:
             self.playlist_button.setText("☰")
         if "volume" in self._icons:
             self.volume_button.setIcon(self._icons["volume"])
-            self.volume_button.setIconSize(QSize(24, 24))
+            self.volume_button.setIconSize(QSize(icon_size, icon_size))
         else:
             self.volume_button.setText("🔊")
         if "expand" in self._icons:
             self.restore_button.setIcon(self._icons["expand"])
-            self.restore_button.setIconSize(QSize(24, 24))
+            self.restore_button.setIconSize(QSize(icon_size, icon_size))
         else:
             self.restore_button.setText("⤢")
 
@@ -597,11 +654,13 @@ class MiniPlayerBar(QDialog):
         if is_playing and "pause" in self._icons:
             self.play_button.setIcon(self._icons["pause"])
             self.play_button.setText("")
-            self.play_button.setIconSize(QSize(24, 24))
+            icon_size = self._px(24)
+            self.play_button.setIconSize(QSize(icon_size, icon_size))
         elif not is_playing and "play" in self._icons:
             self.play_button.setIcon(self._icons["play"])
             self.play_button.setText("")
-            self.play_button.setIconSize(QSize(24, 24))
+            icon_size = self._px(24)
+            self.play_button.setIconSize(QSize(icon_size, icon_size))
         else:
             self.play_button.setIcon(QIcon())
             self.play_button.setText("⏸" if is_playing else "▶")
@@ -784,9 +843,18 @@ class MiniPlayerBar(QDialog):
         super().hideEvent(event)
 
     def showEvent(self, event) -> None:
+        self._apply_scaled_ui()
+        self._load_button_icons()
         if not self._progress_timer.isActive():
             self._progress_timer.start()
         super().showEvent(event)
+
+    def event(self, event) -> bool:
+        if event.type() == QEvent.Type.ScreenChangeInternal:
+            self._apply_scaled_ui()
+            self._load_button_icons()
+            self.refresh_state()
+        return super().event(event)
 
 
 class MusicWindow(QDialog):
@@ -869,6 +937,12 @@ class MusicWindow(QDialog):
         self._progress_timer.timeout.connect(self._update_progress_ui)
         self._progress_timer.start()
 
+    def _ui_scale(self) -> float:
+        return current_app_scale(QApplication.instance())
+
+    def _px(self, value: int) -> int:
+        return px(value, self._ui_scale())
+
     def is_ready_for_playback(self) -> bool:
         return self._ready_emitted
 
@@ -900,10 +974,9 @@ class MusicWindow(QDialog):
         specs = {
             "import": ("import.png", "download.png", "ic_import.png"),
             "remove": ("remove.png", "delete.png", "ic_remove.png"),
-            "prev": ("prev.png", "previous.png", "ic_prev.png"),
             "play": ("play.png", "ic_play.png"),
             "pause": ("pause.png", "ic_pause.png"),
-            "next": ("next.png", "ic_next.png"),
+            "next": ("skip.png", "next.png", "ic_next.png"),
             "random": ("random.png", "shuffle.png", "ic_random.png"),
             "volume": ("volume.png", "ic_volume.png"),
             "expand": ("expand.png", "exitfull.png", "ic_expand.png"),
@@ -912,6 +985,15 @@ class MusicWindow(QDialog):
             icon = _load_icon_from_candidates(self._icon_dir, names)
             if icon is not None:
                 self._button_icons[key] = icon
+        next_icon = self._button_icons.get("next")
+        if next_icon is not None:
+            prev_icon = _mirrored_icon(next_icon)
+            if prev_icon is not None:
+                self._button_icons["prev"] = prev_icon
+        if "prev" not in self._button_icons:
+            fallback_prev = _load_icon_from_candidates(self._icon_dir, ("prev.png", "previous.png", "ic_prev.png"))
+            if fallback_prev is not None:
+                self._button_icons["prev"] = fallback_prev
 
     def _show_mini_bar(self) -> None:
         mini = self._ensure_mini_bar()
@@ -965,6 +1047,7 @@ class MusicWindow(QDialog):
         self._hide_mini_bar()
 
     def _build_ui(self) -> None:
+        scale = self._ui_scale()
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
@@ -977,21 +1060,10 @@ class MusicWindow(QDialog):
 
         avatar = QLabel("")
         avatar.setObjectName("avatarBadge")
-        avatar.setFixedSize(56, 56)
-        if self._icon_path is not None and self._icon_path.exists():
-            pixmap = QPixmap(str(self._icon_path))
-            if not pixmap.isNull():
-                avatar.setPixmap(
-                    pixmap.scaled(
-                        56,
-                        56,
-                        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                        Qt.TransformationMode.SmoothTransformation,
-                    )
-                )
-                avatar.setScaledContents(True)
-        else:
-            avatar.setText("飞")
+        avatar_size = px(56, scale)
+        avatar.setFixedSize(avatar_size, avatar_size)
+        self.avatar_badge = avatar
+        self._refresh_avatar_pixmap(avatar_size)
         title = QLabel("飞行雪绒电台")
         title.setObjectName("navTitle")
         nav_layout.addWidget(avatar)
@@ -1019,16 +1091,17 @@ class MusicWindow(QDialog):
         self.now_playing.setObjectName("nowPlaying")
         self.now_playing.setTextFormat(Qt.TextFormat.RichText)
         self.now_playing.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.now_playing.setMinimumHeight(72)
+        self.now_playing.setMinimumHeight(px(96, scale))
         self.float_bar_button = QPushButton("")
         self.float_bar_button.setObjectName("navActionBtn")
         self.float_bar_button.setToolTip("切换到迷你播放器")
-        self.float_bar_button.setFixedHeight(72)
+        self.float_bar_button.setFixedHeight(px(96, scale))
         self.float_bar_button.clicked.connect(self._toggle_mini_bar_from_ui)
         self._jumpout_icon = self._load_jumpout_icon()
         if self._jumpout_icon is not None:
             self.float_bar_button.setIcon(self._jumpout_icon)
-            self.float_bar_button.setIconSize(self.float_bar_button.size() - QSize(4, 4))
+            inset = px(4, scale)
+            self.float_bar_button.setIconSize(self.float_bar_button.size() - QSize(inset, inset))
         else:
             self.float_bar_button.setText("⤡")
         now_playing_row.addWidget(self.now_playing, 1)
@@ -1072,7 +1145,7 @@ class MusicWindow(QDialog):
         self.volume_popup_slider.valueChanged.connect(self._on_volume_changed)
         popup_layout.addWidget(self.volume_popup_value)
         popup_layout.addWidget(self.volume_popup_slider, 1)
-        self.volume_popup.resize(54, 170)
+        self.volume_popup.resize(px(54, scale), px(170, scale))
         self._sync_volume_ui(max(0, min(100, int(self._get_volume_percent_fn()))))
 
         self.track_list = PlaylistTreeWidget(self._playlist_bg_path, panel)
@@ -1135,9 +1208,8 @@ class MusicWindow(QDialog):
         root.addWidget(nav)
         root.addWidget(panel, 1)
 
-        track_list_background = "background: transparent;"
-
-        stylesheet = """
+        self._track_list_background = "background: transparent;"
+        self._main_stylesheet_template = """
             QDialog {
                 background: rgba(255, 247, 251, 0.78);
                 color: #2a1f2a;
@@ -1159,13 +1231,13 @@ class MusicWindow(QDialog):
                 border: 2px solid #ffc2de;
             }
             QLabel#navTitle {
-                font-size: 18px;
+                font-size: __FS18__px;
                 font-weight: 700;
                 color: #221626;
             }
             QLabel#followCount {
                 color: #8d365d;
-                font-size: 12px;
+                font-size: __FS12__px;
                 font-weight: 700;
                 padding: 0 2px;
             }
@@ -1178,10 +1250,10 @@ class MusicWindow(QDialog):
                 border: none;
                 border-radius: 12px;
                 color: #ffffff;
-                min-width: 56px;
-                min-height: 32px;
+                min-width: __FOLLOW_W__px;
+                min-height: __FOLLOW_H__px;
                 padding: 0 10px;
-                font-size: 13px;
+                font-size: __FS13__px;
                 font-weight: 700;
             }
             QPushButton#followBtn:hover {
@@ -1203,12 +1275,12 @@ class MusicWindow(QDialog):
                 border: none;
                 border-radius: 14px;
                 color: #7a3658;
-                min-width: 56px;
-                max-width: 56px;
-                min-height: 72px;
-                max-height: 72px;
+                min-width: __NAVBTN_W__px;
+                max-width: __NAVBTN_W__px;
+                min-height: __NAVBTN_H__px;
+                max-height: __NAVBTN_H__px;
                 padding: 0px;
-                font-size: 34px;
+                font-size: __FS34__px;
                 font-weight: 600;
             }
             QPushButton#navActionBtn:hover {
@@ -1236,12 +1308,12 @@ class MusicWindow(QDialog):
                 border-radius: 12px;
                 padding: 8px;
                 color: #6c2e4e;
-                font-size: 13px;
+                font-size: __FS13__px;
             }
             QLabel#timeLabel {
                 color: #8a4a69;
-                min-width: 44px;
-                font-size: 11px;
+                min-width: __TIME_W__px;
+                font-size: __FS11__px;
                 font-weight: 600;
             }
             QSlider#progressSlider::groove:horizontal {
@@ -1268,15 +1340,15 @@ class MusicWindow(QDialog):
                 background: rgba(255, 255, 255, 0.98);
             }
             QPushButton#volumeToggleBtn {
-                min-width: 34px;
-                max-width: 34px;
-                min-height: 28px;
-                max-height: 28px;
+                min-width: __VOLBTN_W__px;
+                max-width: __VOLBTN_W__px;
+                min-height: __VOLBTN_H__px;
+                max-height: __VOLBTN_H__px;
                 border-radius: 10px;
                 border: none;
                 background: rgba(255, 255, 255, 0.36);
                 color: #7a3658;
-                font-size: 16px;
+                font-size: __FS16__px;
                 font-weight: 700;
             }
             QPushButton#volumeToggleBtn:hover {
@@ -1292,7 +1364,7 @@ class MusicWindow(QDialog):
             }
             QLabel#volumePopupValue {
                 color: #8d365d;
-                font-size: 11px;
+                font-size: __FS11__px;
                 font-weight: 700;
             }
             QSlider#volumePopupSlider::groove:vertical {
@@ -1331,7 +1403,7 @@ class MusicWindow(QDialog):
                 border: none;
                 border-radius: 14px;
                 padding: 4px;
-                font-size: 14px;
+                font-size: __FS14__px;
                 color: #2a1f2a;
             }
             QTreeWidget#trackList::item {
@@ -1350,7 +1422,7 @@ class MusicWindow(QDialog):
                 border-bottom: 1px solid rgba(255, 211, 230, 0.34);
                 padding: 6px 8px;
                 color: #8d365d;
-                font-size: 12px;
+                font-size: __FS12__px;
                 font-weight: 700;
             }
             QPushButton#actionBtn {
@@ -1363,10 +1435,10 @@ class MusicWindow(QDialog):
                 border: none;
                 border-radius: 15px;
                 color: #7b3356;
-                min-width: 48px;
-                min-height: 40px;
+                min-width: __ACTION_W__px;
+                min-height: __ACTION_H__px;
                 padding: 4px;
-                font-size: 20px;
+                font-size: __FS20__px;
                 font-weight: 600;
             }
             QPushButton#actionBtn:hover {
@@ -1396,12 +1468,12 @@ class MusicWindow(QDialog):
                 border: none;
                 border-radius: 24px;
                 color: #6f2a4a;
-                min-width: 48px;
-                max-width: 48px;
-                min-height: 48px;
-                max-height: 48px;
+                min-width: __MAINBTN__px;
+                max-width: __MAINBTN__px;
+                min-height: __MAINBTN__px;
+                max-height: __MAINBTN__px;
                 padding: 0px;
-                font-size: 21px;
+                font-size: __FS21__px;
                 font-weight: 700;
             }
             QPushButton#actionMainBtn:hover {
@@ -1421,11 +1493,72 @@ class MusicWindow(QDialog):
                 color: #b995ab;
             }
             """
-        self.setStyleSheet(stylesheet.replace("__TRACK_LIST_BACKGROUND__", track_list_background))
+        self._apply_main_stylesheet()
         self._load_main_button_icons()
         self._apply_main_button_icons()
         # Ensure volume icon state uses freshly loaded assets immediately.
         self._sync_volume_ui(self._get_volume_percent_fn())
+
+    def _apply_main_stylesheet(self) -> None:
+        scale = self._ui_scale()
+        stylesheet = self._main_stylesheet_template.replace("__TRACK_LIST_BACKGROUND__", self._track_list_background)
+        stylesheet = (
+            stylesheet.replace("__FS11__", str(px(11, scale)))
+            .replace("__FS12__", str(px(12, scale)))
+            .replace("__FS13__", str(px(13, scale)))
+            .replace("__FS14__", str(px(14, scale)))
+            .replace("__FS16__", str(px(16, scale)))
+            .replace("__FS18__", str(px(18, scale)))
+            .replace("__FS20__", str(px(20, scale)))
+            .replace("__FS21__", str(px(21, scale)))
+            .replace("__FS34__", str(px(34, scale)))
+            .replace("__FOLLOW_W__", str(px(56, scale)))
+            .replace("__FOLLOW_H__", str(px(32, scale)))
+            .replace("__NAVBTN_W__", str(px(56, scale)))
+            .replace("__NAVBTN_H__", str(px(96, scale)))
+            .replace("__TIME_W__", str(px(44, scale)))
+            .replace("__VOLBTN_W__", str(px(34, scale)))
+            .replace("__VOLBTN_H__", str(px(28, scale)))
+            .replace("__ACTION_W__", str(px(48, scale)))
+            .replace("__ACTION_H__", str(px(40, scale)))
+            .replace("__MAINBTN__", str(px(48, scale)))
+        )
+        self.setStyleSheet(stylesheet)
+
+    def _refresh_avatar_pixmap(self, avatar_size: int) -> None:
+        if self._icon_path is not None and self._icon_path.exists():
+            pixmap = QPixmap(str(self._icon_path))
+            if not pixmap.isNull():
+                self.avatar_badge.setPixmap(
+                    pixmap.scaled(
+                        avatar_size,
+                        avatar_size,
+                        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                )
+                self.avatar_badge.setScaledContents(True)
+                return
+        self.avatar_badge.setPixmap(QPixmap())
+        self.avatar_badge.setText("飞")
+
+    def _apply_scaled_ui(self) -> None:
+        scale = self._ui_scale()
+        avatar_size = px(56, scale)
+        self.avatar_badge.setFixedSize(avatar_size, avatar_size)
+        self._refresh_avatar_pixmap(avatar_size)
+        self.now_playing.setMinimumHeight(px(96, scale))
+        self.float_bar_button.setFixedHeight(px(96, scale))
+        if self._jumpout_icon is not None:
+            self.float_bar_button.setIcon(self._jumpout_icon)
+            inset = px(4, scale)
+            self.float_bar_button.setIconSize(self.float_bar_button.size() - QSize(inset, inset))
+        self.volume_popup.resize(px(54, scale), px(170, scale))
+        self._apply_main_stylesheet()
+        self._apply_main_button_icons()
+        self._sync_play_button()
+        if self._last_now_playing_key is not None:
+            self._refresh_now_playing(force=True)
 
     def _on_item_double_clicked(self, _item, _column: int) -> None:
         self._on_play_selected()
@@ -1671,11 +1804,11 @@ class MusicWindow(QDialog):
         self.track_list.setColumnWidth(1, artist_width)
         self.track_list.setColumnWidth(2, album_width)
 
-    def _refresh_now_playing(self) -> None:
+    def _refresh_now_playing(self, force: bool = False) -> None:
         current = self._current_track_fn()
         is_playing = bool(self._is_playing_fn())
         now_playing_key = (str(current) if current is not None else "", is_playing)
-        if now_playing_key == self._last_now_playing_key:
+        if (not force) and now_playing_key == self._last_now_playing_key:
             # Avoid repeated metadata I/O and repaint work when state is unchanged.
             self._update_control_states()
             self._sync_play_button()
@@ -1709,15 +1842,16 @@ class MusicWindow(QDialog):
         is_playing = bool(self._is_playing_fn())
         pause_icon = self._button_icons.get("pause")
         play_icon = self._button_icons.get("play")
+        icon_size = self._px(24)
         if is_playing and pause_icon is not None:
             self.play_button.setIcon(pause_icon)
             self.play_button.setText("")
-            self.play_button.setIconSize(QSize(24, 24))
+            self.play_button.setIconSize(QSize(icon_size, icon_size))
             return
         if (not is_playing) and play_icon is not None:
             self.play_button.setIcon(play_icon)
             self.play_button.setText("")
-            self.play_button.setIconSize(QSize(24, 24))
+            self.play_button.setIconSize(QSize(icon_size, icon_size))
             return
         self.play_button.setIcon(QIcon())
         self.play_button.setText("⏸" if is_playing else "▶")
@@ -1761,12 +1895,15 @@ class MusicWindow(QDialog):
         self._save_follow_state()
 
     def _apply_main_button_icons(self) -> None:
+        icon_size = self._px(24)
+
         def apply(button: QPushButton, key: str, fallback: str, size: int = 24) -> None:
             icon = self._button_icons.get(key)
             if icon is not None:
                 button.setIcon(icon)
                 button.setText("")
-                button.setIconSize(QSize(size, size))
+                resolved = icon_size if size == 24 else self._px(size)
+                button.setIconSize(QSize(resolved, resolved))
             else:
                 button.setIcon(QIcon())
                 button.setText(fallback)
@@ -1782,12 +1919,15 @@ class MusicWindow(QDialog):
         title_html = html.escape((title or "-").strip() or "-")
         artist_html = html.escape((artist or "-").strip() or "-")
         album_html = html.escape((album or "-").strip() or "-")
+        title_size = self._px(19)
+        artist_size = self._px(13)
+        album_size = self._px(12)
         self.now_playing.setText(
             (
                 "<div style='line-height:1.08;'>"
-                f"<div style='font-size:19px; font-weight:800; color:#c13c83;'>{title_html}</div>"
-                f"<div style='margin-top:2px; font-size:13px; color:#ff5b9d;'>{artist_html}</div>"
-                f"<div style='margin-top:1px; font-size:12px; color:#b78da3;'>{album_html}</div>"
+                f"<div style='font-size:{title_size}px; font-weight:800; color:#c13c83;'>{title_html}</div>"
+                f"<div style='margin-top:2px; font-size:{artist_size}px; color:#ff5b9d;'>{artist_html}</div>"
+                f"<div style='margin-top:1px; font-size:{album_size}px; color:#5f5f5f;'>{album_html}</div>"
                 "</div>"
             )
         )
@@ -1914,7 +2054,13 @@ class MusicWindow(QDialog):
         self._sync_float_bar_button()
         super().closeEvent(event)
 
+    def event(self, event) -> bool:
+        if event.type() == QEvent.Type.ScreenChangeInternal:
+            self._apply_scaled_ui()
+        return super().event(event)
+
     def showEvent(self, event) -> None:
+        self._apply_scaled_ui()
         if not self._ready_emitted:
             self._ready_emitted = True
             self.readyForPlayback.emit()

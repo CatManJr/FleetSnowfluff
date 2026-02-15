@@ -25,6 +25,7 @@ from .music_window import MusicWindow
 from .seal_widget import SealWidget
 from .settings_dialog import SettingsDialog
 from .transform_window import TransformWindow
+from .ui_scale import current_app_scale, px
 
 
 class Aemeath(QLabel):
@@ -622,6 +623,8 @@ class Aemeath(QLabel):
 
     def _setup_menu(self) -> None:
         self._menu = QMenu(self)
+        app = QApplication.instance()
+        scale = current_app_scale(app) if app is not None else 1.0
         self._menu.setStyleSheet(
             """
             QMenu {
@@ -636,7 +639,7 @@ class Aemeath(QLabel):
                 margin: 2px 0;
                 color: #6c2e4e;
                 background: transparent;
-                font-size: 12px;
+                font-size: %dpx;
             }
             QMenu::item:selected {
                 background: #fff0f7;
@@ -647,6 +650,7 @@ class Aemeath(QLabel):
                 color: #7a2b4d;
             }
             """
+            % px(12, scale)
         )
         self._chat_action = self._menu.addAction("打开飞讯")
         self._transform_action = self._menu.addAction("爱弥斯，变身！")

@@ -8,6 +8,7 @@ from PySide6.QtCore import QPoint, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QCloseEvent, QIcon, QKeyEvent, QMouseEvent, QPainter, QPen, QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QFrame,
     QHBoxLayout,
@@ -22,6 +23,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from .ui_scale import current_app_scale, px
 
 
 class DrawCanvas(QWidget):
@@ -100,6 +103,8 @@ class StickyNoteWindow(QDialog):
         btn_row.addStretch(1)
         btn_row.addWidget(clear_btn)
         root.addLayout(btn_row)
+        app = QApplication.instance()
+        scale = current_app_scale(app) if app is not None else 1.0
 
         self.setStyleSheet(
             """
@@ -128,7 +133,7 @@ class StickyNoteWindow(QDialog):
                 border: none;
                 background: #fffdfd;
                 color: #2a1f2a;
-                font-size: 14px;
+                font-size: %dpx;
             }
             QPushButton {
                 background: #fff0f7;
@@ -138,6 +143,7 @@ class StickyNoteWindow(QDialog):
                 padding: 6px 10px;
             }
             """
+            % px(14, scale)
         )
 
 
@@ -208,6 +214,8 @@ class MiniCallBar(QDialog):
         box.addLayout(top_row)
         box.addLayout(btn_row)
         root.addWidget(panel, 1)
+        app = QApplication.instance()
+        scale = current_app_scale(app) if app is not None else 1.0
 
         self.setStyleSheet(
             """
@@ -222,12 +230,12 @@ class MiniCallBar(QDialog):
             }
             QLabel#miniStatus {
                 color: #7f3154;
-                font-size: 12px;
+                font-size: %dpx;
                 font-weight: 700;
             }
             QLabel#miniTimer {
                 color: #c13c83;
-                font-size: 16px;
+                font-size: %dpx;
                 font-weight: 800;
             }
             QPushButton#miniBtn {
@@ -250,6 +258,7 @@ class MiniCallBar(QDialog):
                 font-weight: 700;
             }
             """
+            % (px(12, scale), px(16, scale))
         )
 
     def set_countdown(self, text: str) -> None:
@@ -598,6 +607,8 @@ class WithYouWindow(QDialog):
         self._tick.setInterval(1000)
         self._tick.timeout.connect(self._on_tick)
         self._apply_icon_buttons()
+        app = QApplication.instance()
+        scale = current_app_scale(app) if app is not None else 1.0
 
         self.setStyleSheet(
             """
@@ -614,33 +625,33 @@ class WithYouWindow(QDialog):
                 border-top: 1px solid #ffd3e6;
             }
             QLabel#statusLabel {
-                font-size: 17px;
+                font-size: %dpx;
                 font-weight: 700;
                 color: #221626;
             }
             QLabel#roundLabel {
-                font-size: 32px;
+                font-size: %dpx;
                 font-weight: 700;
                 color: #8d365d;
             }
             QLabel#tipLabel {
-                font-size: 13px;
+                font-size: %dpx;
                 color: #8d365d;
             }
             QLabel#settingFieldLabel {
-                font-size: 14px;
+                font-size: %dpx;
                 color: #7f3154;
             }
             QLabel#roundsFieldLabel {
-                font-size: 28px;
+                font-size: %dpx;
                 color: #7f3154;
             }
             QLabel#timeFieldLabel {
-                font-size: 28px;
+                font-size: %dpx;
                 color: #7f3154;
             }
             QLabel#unitLabel {
-                font-size: 13px;
+                font-size: %dpx;
                 color: #8d365d;
             }
             QFrame#settingCard {
@@ -649,7 +660,7 @@ class WithYouWindow(QDialog):
                 border-radius: 12px;
             }
             QLabel#countdownLabel {
-                font-size: 56px;
+                font-size: %dpx;
                 font-weight: 800;
                 color: #c13c83;
             }
@@ -661,15 +672,15 @@ class WithYouWindow(QDialog):
                 border: 2px solid #ffb3d4;
                 border-radius: 10px;
                 padding: 4px 8px;
-                min-height: 34px;
+                min-height: %dpx;
                 color: #2a1f2a;
-                font-size: 12px;
+                font-size: %dpx;
             }
             QSpinBox#roundsFieldSpin {
-                font-size: 24px;
+                font-size: %dpx;
             }
             QSpinBox#timeFieldSpin {
-                font-size: 24px;
+                font-size: %dpx;
             }
             QPushButton#primaryBtn {
                 background: qlineargradient(
@@ -680,8 +691,8 @@ class WithYouWindow(QDialog):
                 border: none;
                 border-radius: 22px;
                 color: #ffffff;
-                min-height: 44px;
-                font-size: 15px;
+                min-height: %dpx;
+                font-size: %dpx;
                 font-weight: 700;
             }
             QPushButton#ghostBtn {
@@ -693,10 +704,10 @@ class WithYouWindow(QDialog):
                 border: none;
                 border-radius: 18px;
                 color: #8d365d;
-                min-height: 36px;
-                min-width: 66px;
+                min-height: %dpx;
+                min-width: %dpx;
                 padding: 4px 12px;
-                font-size: 13px;
+                font-size: %dpx;
             }
             QPushButton#dangerBtn {
                 background: qlineargradient(
@@ -707,13 +718,35 @@ class WithYouWindow(QDialog):
                 border: none;
                 border-radius: 18px;
                 color: #b43477;
-                min-height: 36px;
-                min-width: 66px;
+                min-height: %dpx;
+                min-width: %dpx;
                 padding: 4px 12px;
-                font-size: 13px;
+                font-size: %dpx;
                 font-weight: 700;
             }
             """
+            % (
+                px(17, scale),
+                px(32, scale),
+                px(13, scale),
+                px(14, scale),
+                px(28, scale),
+                px(28, scale),
+                px(13, scale),
+                px(56, scale),
+                px(34, scale),
+                px(12, scale),
+                px(24, scale),
+                px(24, scale),
+                px(44, scale),
+                px(15, scale),
+                px(36, scale),
+                px(66, scale),
+                px(13, scale),
+                px(36, scale),
+                px(66, scale),
+                px(13, scale),
+            )
         )
 
     def open_call(self) -> None:

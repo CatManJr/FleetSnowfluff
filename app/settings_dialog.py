@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QSpinBox, QVBoxLayout
+from PySide6.QtCore import QEvent
+from PySide6.QtWidgets import QApplication, QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QSpinBox, QVBoxLayout
+
+from .ui_scale import current_app_scale, px
 
 
 class SettingsDialog(QDialog):
@@ -58,6 +61,12 @@ class SettingsDialog(QDialog):
         root = QVBoxLayout(self)
         root.addLayout(form)
         root.addWidget(buttons)
+        self._apply_scaled_styles()
+
+    def _apply_scaled_styles(self) -> None:
+        app = QApplication.instance()
+        scale = current_app_scale(app) if app is not None else 1.0
+        fs = px(13, scale)
         self.setStyleSheet(
             """
             QDialog {
@@ -66,7 +75,7 @@ class SettingsDialog(QDialog):
             }
             QLabel {
                 color: #2a1f2a;
-                font-size: 13px;
+                font-size: %dpx;
             }
             QLineEdit, QSpinBox {
                 background: #fff2f8;
@@ -74,7 +83,7 @@ class SettingsDialog(QDialog):
                 border-radius: 10px;
                 padding: 4px 8px;
                 min-height: 30px;
-                font-size: 13px;
+                font-size: %dpx;
                 color: #2a1f2a;
             }
             QLineEdit::placeholder {
@@ -82,7 +91,7 @@ class SettingsDialog(QDialog):
             }
             QCheckBox {
                 color: #7a2f51;
-                font-size: 13px;
+                font-size: %dpx;
             }
             QDialogButtonBox QPushButton {
                 background: qlineargradient(
@@ -95,14 +104,20 @@ class SettingsDialog(QDialog):
                 color: #8d365d;
                 min-height: 32px;
                 padding: 4px 12px;
-                font-size: 13px;
+                font-size: %dpx;
             }
             QDialogButtonBox QPushButton:hover {
                 border-color: #ff8fc1;
                 background: #ffe7f3;
             }
             """
+            % (fs, fs, fs, fs)
         )
+
+    def event(self, event) -> bool:
+        if event.type() == QEvent.Type.ScreenChangeInternal:
+            self._apply_scaled_styles()
+        return super().event(event)
 
     def api_key(self) -> str:
         return self.api_key_input.text().strip()
