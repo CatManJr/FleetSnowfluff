@@ -267,7 +267,7 @@ class MiniCallBar(QDialog):
             "mini_danger_hover_b": "#ffe8f0",
             "mini_danger_pressed_a": "#ffe8f1",
             "mini_danger_pressed_b": "#ffdbe8",
-            "font_family": '"思源黑体-Bold", "Source Han Sans SC", "PingFang SC"',
+            "font_family": '"SF Pro Rounded", "SF-Pro-Rounded-Regular", "PingFang SC", "Helvetica Neue", sans-serif',
         }
 
     def _build_stylesheet(self, scale: float) -> str:
@@ -537,15 +537,10 @@ class WithYouWindow(QDialog):
         self._middle_stack = QStackedWidget(self._interactive_page)
 
         self._settings_panel = QFrame(self._interactive_page)
-        self._settings_panel.setObjectName("settingsPanel")
+        self._settings_panel.setObjectName("settingsContentPanel")
         settings_layout = QVBoxLayout(self._settings_panel)
         settings_layout.setContentsMargins(14, 14, 14, 14)
         settings_layout.setSpacing(10)
-        tip = QLabel("设置轮次与每轮时间")
-        tip.setObjectName("tipLabel")
-        divider = QFrame(self._settings_panel)
-        divider.setObjectName("settingsDivider")
-        divider.setFixedHeight(1)
         settings_rows = QVBoxLayout()
         settings_rows.setContentsMargins(0, 0, 0, 0)
         settings_rows.setSpacing(10)
@@ -647,8 +642,6 @@ class WithYouWindow(QDialog):
         self.return_btn.setToolTip("返回当前计时进度（不应用本次修改）")
         self.return_btn.clicked.connect(self._return_to_running_without_changes)
         self.return_btn.setVisible(False)
-        settings_layout.addWidget(tip)
-        settings_layout.addWidget(divider)
         settings_layout.addLayout(settings_rows, 1)
         settings_actions = QHBoxLayout()
         settings_actions.setContentsMargins(0, 0, 0, 0)
@@ -660,7 +653,7 @@ class WithYouWindow(QDialog):
         settings_layout.addLayout(settings_actions)
 
         self._settings_scroll = QScrollArea(self._interactive_page)
-        self._settings_scroll.setObjectName("settingsPanel")
+        self._settings_scroll.setObjectName("settingsScroll")
         self._settings_scroll.setWidgetResizable(True)
         self._settings_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._settings_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -1124,7 +1117,7 @@ class WithYouWindow(QDialog):
             "settings_bg": "#eef2f6",
             "focus_window_bg": "rgba(253, 240, 244, 1)",
             "config_window_bg": "rgba(238, 242, 246, 1)",
-            "settings_panel_bg": "rgba(238, 242, 246, 1)",
+            "settings_panel_bg": "#e79384",
             "status_text": "#f1f5f9",
             "round_text": "#c4d0df",
             "tip_text": "#18222d",
@@ -1187,8 +1180,9 @@ class WithYouWindow(QDialog):
                 background: transparent;
                 border: none;
             }}
-            QDialog#withYouWindow[viewMode="focus"] {{
-                background: {t["focus_window_bg"]};
+            QDialog#withYouWindow {{
+                background: transparent;
+                border: none;
             }}
             QFrame#noisePopupPanel, QFrame#bgmPopupPanel {{
                 background: {t["popup_bg"]};
@@ -1203,7 +1197,6 @@ class WithYouWindow(QDialog):
                 color: {t["macaron_pink"]};
             }}
             QDialog#withYouWindow[viewMode="config"] {{
-                background: {t["config_window_bg"]};
                 color: {t["settings_text"]};
             }}
             QLabel#statusLabel, QLabel#roundLabel, QLabel#countdownLabel, QPushButton {{
@@ -1217,7 +1210,16 @@ class WithYouWindow(QDialog):
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ffffff, stop:1 #f4f7fa);
                 border-bottom: 1px solid {t["card_border"]};
             }}
-            QDialog#withYouWindow QFrame#settingsPanel {{ background: {t["settings_panel_bg"]}; }}
+            QDialog#withYouWindow QScrollArea#settingsScroll {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {t["panel_grad_a"]}, stop:1 {t["panel_grad_b"]});
+                border: none;
+            }}
+            QDialog#withYouWindow QScrollArea#settingsScroll > QWidget#qt_scrollarea_viewport {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {t["panel_grad_a"]}, stop:1 {t["panel_grad_b"]});
+            }}
+            QDialog#withYouWindow QFrame#settingsContentPanel {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {t["panel_grad_a"]}, stop:1 {t["panel_grad_b"]});
+            }}
             QDialog#withYouWindow QFrame#bottomBar {{
                 border-bottom: none;
                 border-top: 1px solid {t["panel_border"]};
@@ -1238,7 +1240,7 @@ class WithYouWindow(QDialog):
             QFrame#settingsDivider {{ background: {t["divider"]}; border-radius: 1px; margin-bottom: 2px; }}
             QFrame#settingCard {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {t["card_bg_a"]}, stop:1 {t["card_bg_b"]});
-                border: 1px solid {t["card_border"]};
+                border: none;
                 border-radius: 14px;
             }}
             QLabel#countdownLabel {{

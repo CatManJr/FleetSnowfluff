@@ -214,7 +214,7 @@ class ChatWindow(QDialog):
             "timeline_item_assistant_bottom": "#f6f8fb",
             "timeline_item_assistant_border": "#d7e0e9",
             "timestamp": "#8b96a6",
-            "font_family": '"思源黑体-Bold", "Source Han Sans SC", "PingFang SC"',
+            "font_family": '"SF Pro Rounded", "SF-Pro-Rounded-Regular", "PingFang SC", "Helvetica Neue", sans-serif',
         }
 
     @staticmethod
