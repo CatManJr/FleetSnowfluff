@@ -790,6 +790,12 @@ class Aemeath(QLabel):
         return result.returncode == 0 and result.stdout.strip() == "1"
 
     def _print_terminal_greeting(self) -> None:
+        if sys.platform.startswith("win"):
+            # Windows terminal interaction is handled during launch via /k argument
+            # or requires complex Win32 API injection which is out of scope.
+            # We already handled the greeting in _launch_hacker_terminal for Windows.
+            return
+
         if sys.platform != "darwin":
             return
 
@@ -889,6 +895,8 @@ class Aemeath(QLabel):
     def _transform_emis(self) -> None:
         # Prefer awaiting desktop-scene transform clip when available.
         awaiting_path = self.resources_dir / "awaiting.mov"
+        if not awaiting_path.exists():
+             awaiting_path = self.resources_dir / "awaiting.mp4"
         use_desktop_scene_mode = awaiting_path.exists()
 
         if use_desktop_scene_mode:
@@ -1038,7 +1046,14 @@ class Aemeath(QLabel):
             QTimer.singleShot(450, self._print_terminal_greeting)
             return
         if sys.platform.startswith("win"):
-            subprocess.Popen("start cmd", shell=True)
+            # Use 'start "Title" cmd /k ...' to launch a new CMD window.
+            # /k keeps the window open after the first command.
+            # We echo the greeting and then leave the prompt open.
+            greeting = "电子幽灵登场！Ciallo～(∠・ω< )⌒★"
+            # Since 'start' is a shell builtin, we need shell=True.
+            # Explicitly removing /D so it defaults to system behavior (often user profile if not forced).
+            cmd = f'start "Electronic Ghost" cmd /k "echo {greeting}"'
+            subprocess.Popen(cmd, shell=True)
             return
         try:
             subprocess.Popen(["x-terminal-emulator"])

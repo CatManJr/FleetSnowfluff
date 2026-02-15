@@ -31,6 +31,11 @@ project-root/
 
 `release/` 会由 `src/release_macos.sh` 自动更新。
 
+注意代码仓库的控制域：
+```bash
+git clone https://github.com/CatManJr/FleetSnowfluff src
+```
+
 ### 环境准备
 
 先在 base 环境安装 `uv`：
@@ -48,6 +53,10 @@ uv sync
 uv run main.py
 ```
 
+发布版打包器：
+下载安装[Inno Setup](https://jrsoftware.org/isdl.php)
+安装到默认路径即可。自定义安装请相应修改`src\windows-toolkit\release_windows.ps1`
+
 ### 打包发布版
 
 发布版打包：
@@ -56,7 +65,35 @@ cd src
 ./release_macos.sh       # 获得.app文件和.dmg 安装包
 ```
 
-### Windows打包安装包
+### Windows开发者安装
+#### FFmpeg 配置
+
+打包脚本需要 ffmpeg 来转换视频容器格式（.mov → .mp4）。请按以下步骤配置：
+
+1. **下载 FFmpeg**
+   - 访问：https://www.gyan.dev/ffmpeg/builds/
+   - 下载 `ffmpeg-release-essentials.zip`（或 full 版本）
+
+2. **解压到本地**
+   - 将压缩包解压到任意位置，例如：`C:\ffmpeg\`
+   - 解压后应包含 `bin` 文件夹，其中有 `ffmpeg.exe`
+
+3. **添加到 PATH 环境变量（PowerShell 方式）**
+  - 打开 PowerShell（以管理员身份运行）
+  - 执行以下命令添加 ffmpeg bin 目录到 PATH(复制绝对路径并替换)：
+    ```powershell
+    $ffmpegPath = "C:\Program Files (x86)\ffmpeg\bin"
+    [Environment]::SetEnvironmentVariable("Path", $env:Path + ";$ffmpegPath", "User")
+
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+    ```
+  - 重启 PowerShell 使更改生效
+
+4. **验证配置**
+  - 在 PowerShell 中输入：`ffmpeg -version`
+  - 如果显示版本信息，说明配置成功
+
+> **注意**：如果不配置 ffmpeg，脚本会将 .mov 文件直接重命名为 .mp4，可能导致播放卡顿或无法播放。
 
 当前脚本位置：
 

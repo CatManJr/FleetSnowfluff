@@ -5,13 +5,23 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-if (-not $IsWindows) {
+# Compatible check for Windows (works on PS 5.1 and PS Core)
+$IsWindowsPlatform = $IsWindows -or $env:OS -like "*Windows*"
+if (-not $IsWindowsPlatform) {
     throw "This script only supports Windows."
 }
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ProjectRoot = Resolve-Path (Join-Path $ScriptDir "..")
-$ReleaseDir = Join-Path $ProjectRoot "release"
+# Try to keep paths relative if possible, but Resolve-Path usually returns absolute.
+# We will use relative path calculation based on ScriptDir for clarity in output.
+$ProjectRoot = Join-Path $ScriptDir ".."
+if (Test-Path $ProjectRoot) { $ProjectRoot = (Resolve-Path $ProjectRoot).Path }
+
+# Ensure release folder is parallel to src (ProjectRoot is src currently based on user context, wait)
+# The user cloned to 'src'. So $ScriptDir is .../src/windows-toolkit.
+# $ProjectRoot is .../src.
+# Parallel to src means .../release, which is .../src/../release.
+$ReleaseDir = Join-Path (Join-Path $ProjectRoot "..") "release"
 $BuildDir = Join-Path $ScriptDir "build"
 $ResourceStageDir = Join-Path $BuildDir "resources_win_pack"
 $AppName = "Fleet Snowfluff"
@@ -65,11 +75,11 @@ function Resolve-Iscc {
 function Resolve-ResourcesDir {
     $candidates = @(
         (Join-Path $ProjectRoot "resources"),
-        (Join-Path (Resolve-Path (Join-Path $ProjectRoot "..")) "resources")
+        (Join-Path $ProjectRoot "..\resources")
     )
     foreach ($path in $candidates) {
         if (Test-Path $path -PathType Container) {
-            return (Resolve-Path $path).Path
+            return $path
         }
     }
     throw "Could not locate resources directory."
@@ -86,17 +96,72 @@ function New-ResourceStageOnlyMp4 {
     }
     New-Item -ItemType Directory -Path $TargetDir -Force | Out-Null
 
-    # Copy everything except .mov files.
+    # Ensure absolute path for string manipulation
+    $absSourceDir = (Resolve-Path $SourceDir).Path
+
+    # Check if ffmpeg is in PATH environment variable
+    $ffmpegCmdStr = $null
+    $ffmpegInPath = Get-Command ffmpeg -ErrorAction SilentlyContinue
+    if ($ffmpegInPath) {
+        $ffmpegCmdStr = "ffmpeg"
+        Write-Host "Found ffmpeg in PATH" -ForegroundColor Green
+    } else {
+        Write-Warning "ffmpeg not found in PATH. Videos will be copied/renamed (MAY CAUSE LAG)."
+        Write-Warning "Please add ffmpeg to your PATH environment variable. See README.md for setup instructions."
+    }
+
+    # Copy everything. If it's a .mov file, remux it to .mp4.
     Get-ChildItem -Path $SourceDir -Recurse -File | ForEach-Object {
-        $relative = $_.FullName.Substring($SourceDir.Length).TrimStart("\", "/")
-        if ($_.Extension -ieq ".mov") { return }
-        $dest = Join-Path $TargetDir $relative
+        $relative = $_.FullName.Substring($absSourceDir.Length).TrimStart("\", "/")
+        
+        # Calculate target path
+        $targetName = $relative
+        if ($_.Extension -ieq ".mov") { 
+            $targetName = [System.IO.Path]::ChangeExtension($relative, ".mp4")
+        }
+
+        $dest = Join-Path $TargetDir $targetName
         $destDir = Split-Path -Parent $dest
-        if (-not (Test-Path $destDir)) {
+        if (-not (Test-Path -Path $destDir)) {
             New-Item -ItemType Directory -Path $destDir -Force | Out-Null
         }
-        Copy-Item $_.FullName $dest -Force
+
+        if ($_.Extension -ieq ".mov" -and $ffmpegCmdStr) {
+            # Check if MP4 version already exists in target
+            if (Test-Path $dest) {
+                Write-Host "   Skipping (MP4 exists): $relative" -ForegroundColor DarkYellow
+            } else {
+                Write-Host "   Remuxing to MP4: $relative" -ForegroundColor DarkGray
+                
+                # Use call operator & to run the command string
+                $argList = @("-y", "-v", "error", "-i", $_.FullName, "-c", "copy", "-movflags", "+faststart", $dest)
+                & $ffmpegCmdStr $argList
+                
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warning "   ffmpeg failed for $relative, falling back to copy."
+                    Copy-Item $_.FullName $dest -Force
+                }
+            }
+        } else {
+            # Direct copy for non-mov files or if ffmpeg missing
+            if (-not (Test-Path $dest)) {
+                Copy-Item $_.FullName $dest -Force
+            }
+        }
     }
+}
+
+function Resolve-ResourcesDir {
+    $candidates = @(
+        (Join-Path $ProjectRoot "resources"),
+        (Join-Path $ProjectRoot "..\resources")
+    )
+    foreach ($path in $candidates) {
+        if (Test-Path $path -PathType Container) {
+            return $path
+        }
+    }
+    throw "Could not locate resources directory."
 }
 
 Write-Host "==> Sync dependencies"
@@ -117,11 +182,35 @@ Remove-DeveloperData
 $ResourcesDir = Resolve-ResourcesDir
 
 if (-not $SkipVideoConvert) {
-    $convertScript = Join-Path $ProjectRoot "windows-toolkit\convert_mov_to_mp4.ps1"
-    if (Test-Path $convertScript) {
-        Write-Host "==> Converting .mov videos to .mp4"
-        & $convertScript -Root (Join-Path $ResourcesDir "Call") -Recurse
-    }
+    # Skip ffmpeg steps completely. We'll handle renaming in New-ResourceStageOnlyMp4.
+    Write-Host "==> Skipping ffmpeg conversion (using direct file rename instead)"
+}
+
+Write-Host "==> Generating Windows icon (.ico)"
+$IconPath = Join-Path $ResourcesDir "icon.ico"
+if (-not (Test-Path $IconPath)) {
+    # Generate icon.ico from icon.webp using PySide6 (available in env)
+    $genIconScript = @"
+import sys
+from pathlib import Path
+from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtWidgets import QApplication
+
+app = QApplication(sys.argv)
+src = Path(r'$ResourcesDir') / 'icon.webp'
+dst = Path(r'$IconPath')
+
+if src.exists():
+    pix = QPixmap(str(src))
+    if not pix.isNull():
+        pix.save(str(dst), 'ICO')
+        print(f'Generated: {dst}')
+"@
+    # Run the python snippet
+    $genIconFile = Join-Path $ScriptDir "gen_icon.py"
+    $genIconScript | Set-Content -Path $genIconFile -Encoding UTF8
+    python $genIconFile
+    Remove-Item $genIconFile -Force
 }
 
 Write-Host "==> Preparing resources (mp4 only for videos)"
@@ -133,13 +222,14 @@ $pyiArgs = @(
     "--noconfirm",
     "--clean",
     "--windowed",
+    "--icon", $IconPath,
     "--distpath", $ReleaseDir,
     "--workpath", $BuildDir,
     "--specpath", $ScriptDir,
     "--name", $AppName,
     "--add-data", "$ResourceStageDir;resources",
-    "--add-data", "$ScriptDir\config\FleetSnowfluff.json;resources/config",
-    "$ScriptDir\main.py"
+    "--add-data", "$ProjectRoot\config\FleetSnowfluff.json;resources/config",
+    "$ProjectRoot\main.py"
 )
 & uv @pyiArgs
 
@@ -156,6 +246,7 @@ DefaultDirName={autopf}\$AppName
 DefaultGroupName=$AppName
 OutputDir=$ReleaseDir
 OutputBaseFilename=$InstallerBaseName
+SetupIconFile=$IconPath
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64
