@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QSize, Qt, QTimer, QUrl, Signal
@@ -303,11 +304,16 @@ class WithYouWindow(QDialog):
         self._break_seconds = 5 * 60
         self._resume_state: dict[str, int | bool] | None = None
         self._break_intro_playing = False
+        self._start_intro_playing = False
+        self._end_outro_playing = False
         self._cinematic_fill_mode = False
 
         self._answer_path = self._pick_media(("answering.mov", "answering.mp4", "answering.MOV", "answering.MP4"))
         self._hangup_path = self._pick_media(("hangup.mov", "hangup.mp4", "hangup.MOV", "hangup.MP4"))
         self._break_path = self._pick_media(("break.mov", "break.mp4", "break.MOV", "break.MP4"))
+        self._start1_path = self._pick_media(("start1.mov", "start1.mp4", "start1.MOV", "start1.MP4"))
+        self._start2_path = self._pick_media(("start2.mov", "start2.mp4", "start2.MOV", "start2.MP4"))
+        self._end_path = self._pick_media(("end.mov", "end.mp4", "end.MOV", "end.MP4"))
         self._start_sfx_path = self._pick_media(("start.mp3", "start.MP3", "start.wav", "start.WAV"))
         self._withyou_path = self._pick_media(
             ("withyou.mov", "withyou.mp4", "with_you.mov", "with_you.mp4", "withyou.MOV", "withyou.MP4")
@@ -733,12 +739,43 @@ class WithYouWindow(QDialog):
         self._player.setSource(QUrl.fromLocalFile(str(media_path)))
         self._player.play()
 
+    def _stop_all_playback(self) -> None:
+        self._player.stop()
+        self._sfx_player.stop()
+
     def _play_start_sfx(self) -> None:
         if self._start_sfx_path is None:
             return
         self._sfx_player.stop()
         self._sfx_player.setSource(QUrl.fromLocalFile(str(self._start_sfx_path)))
         self._sfx_player.play()
+
+    def _play_focus_entry_media(self) -> None:
+        self._start_intro_playing = False
+        starts = [p for p in (self._start1_path, self._start2_path) if p is not None]
+        if starts:
+            self._start_intro_playing = True
+            self._set_cinematic_mode(fill=True)
+            self._play_media(random.choice(starts), loop=False)
+            return
+        self._play_start_sfx()
+        self._set_interactive_mode()
+        self._middle_stack.setCurrentWidget(self._withyou_panel)
+        self._active_video_label = self._withyou_video
+        if self._withyou_path is not None:
+            self._play_media(self._withyou_path, loop=True)
+
+    def _finish_all_rounds(self) -> None:
+        self._tick.stop()
+        self._player.stop()
+        self._break_intro_playing = False
+        self._start_intro_playing = False
+        if self._end_path is not None:
+            self._end_outro_playing = True
+            self._set_cinematic_mode(fill=True)
+            self._play_media(self._end_path, loop=False)
+            return
+        self._enter_config(preserve_progress=False)
 
     def _set_cinematic_mode(self, *, fill: bool = False) -> None:
         self._stack.setCurrentWidget(self._cinematic_page)
@@ -756,6 +793,8 @@ class WithYouWindow(QDialog):
         self._middle_stack.setCurrentWidget(self._settings_panel)
         self._active_video_label = None
         self._break_intro_playing = False
+        self._start_intro_playing = False
+        self._end_outro_playing = False
         if preserve_progress:
             self._is_paused = True
             self.status_label.setText("设置中（进度已保留）")
@@ -818,6 +857,8 @@ class WithYouWindow(QDialog):
         self._is_break_phase = False
         self._is_paused = False
         self._break_intro_playing = False
+        self._start_intro_playing = False
+        self._end_outro_playing = False
         self.rounds_spin.setEnabled(False)
         self.focus_min_spin.setEnabled(False)
         self.focus_sec_spin.setEnabled(False)
@@ -838,10 +879,8 @@ class WithYouWindow(QDialog):
         self._sync_countdown_ui()
         self._tick.start()
         self._update_mini_bar_state()
-        self._play_start_sfx()
-        if self._withyou_path is not None:
-            self._play_media(self._withyou_path, loop=True)
-        else:
+        self._play_focus_entry_media()
+        if self._withyou_path is None and not self._start_intro_playing:
             QMessageBox.information(self, "缺少素材", "未找到 withyou 视频素材，将仅保留计时。")
 
     def _return_to_running_without_changes(self) -> None:
@@ -884,8 +923,8 @@ class WithYouWindow(QDialog):
             self.status_label.setText("休息中" if self._is_break_phase else "专注中")
             self._tick.start()
             if not self._is_break_phase:
-                self._play_start_sfx()
-            if self._withyou_path is not None:
+                self._play_focus_entry_media()
+            elif self._withyou_path is not None:
                 self._play_media(self._withyou_path, loop=True)
         self._sync_round_ui()
         self._sync_countdown_ui()
@@ -932,20 +971,13 @@ class WithYouWindow(QDialog):
         if self._remaining_seconds <= 0:
             if self._is_break_phase:
                 if self._current_round >= self._total_rounds:
-                    self._tick.stop()
-                    self._player.stop()
-                    self._enter_config(preserve_progress=False)
+                    self._finish_all_rounds()
                     return
                 self._is_break_phase = False
                 self._current_round += 1
                 self._remaining_seconds = self._round_seconds
                 self.status_label.setText("专注中")
-                self._play_start_sfx()
-                if self._withyou_path is not None:
-                    self._set_interactive_mode()
-                    self._middle_stack.setCurrentWidget(self._withyou_panel)
-                    self._active_video_label = self._withyou_video
-                    self._play_media(self._withyou_path, loop=True)
+                self._play_focus_entry_media()
             else:
                 self._is_break_phase = True
                 self._remaining_seconds = self._break_seconds
@@ -974,21 +1006,14 @@ class WithYouWindow(QDialog):
         self._is_paused = False
         if self._is_break_phase:
             if self._current_round >= self._total_rounds:
-                self._tick.stop()
-                self._player.stop()
-                self._enter_config(preserve_progress=False)
+                self._finish_all_rounds()
                 return
             self._is_break_phase = False
             self._break_intro_playing = False
             self._current_round += 1
             self._remaining_seconds = self._round_seconds
             self.status_label.setText("专注中")
-            self._play_start_sfx()
-            self._set_interactive_mode()
-            self._middle_stack.setCurrentWidget(self._withyou_panel)
-            self._active_video_label = self._withyou_video
-            if self._withyou_path is not None:
-                self._play_media(self._withyou_path, loop=True)
+            self._play_focus_entry_media()
         else:
             self._is_break_phase = True
             self._remaining_seconds = self._break_seconds
@@ -1044,6 +1069,18 @@ class WithYouWindow(QDialog):
             if self._withyou_path is not None:
                 self._play_media(self._withyou_path, loop=True)
             return
+        if self._start_intro_playing and self._phase == "running" and not self._is_break_phase:
+            self._start_intro_playing = False
+            self._set_interactive_mode()
+            self._middle_stack.setCurrentWidget(self._withyou_panel)
+            self._active_video_label = self._withyou_video
+            if self._withyou_path is not None:
+                self._play_media(self._withyou_path, loop=True)
+            return
+        if self._end_outro_playing:
+            self._end_outro_playing = False
+            self._enter_config(preserve_progress=False)
+            return
         if self._phase == "answering":
             self._enter_config()
             return
@@ -1051,6 +1088,10 @@ class WithYouWindow(QDialog):
             self.close()
 
     def _on_media_error(self, _err, _msg: str) -> None:
+        if self._end_outro_playing:
+            self._end_outro_playing = False
+            self._enter_config(preserve_progress=False)
+            return
         if self._phase == "answering":
             self._enter_config()
             return
@@ -1164,11 +1205,38 @@ class WithYouWindow(QDialog):
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Escape:
             if self._phase == "answering":
-                self._player.stop()
+                self._stop_all_playback()
                 self._enter_config()
                 event.accept()
                 return
+            if self._start_intro_playing and self._phase == "running" and not self._is_break_phase:
+                self._stop_all_playback()
+                self._start_intro_playing = False
+                self._set_interactive_mode()
+                self._middle_stack.setCurrentWidget(self._withyou_panel)
+                self._active_video_label = self._withyou_video
+                if self._withyou_path is not None:
+                    self._play_media(self._withyou_path, loop=True)
+                event.accept()
+                return
+            if self._break_intro_playing and self._phase == "running" and self._is_break_phase:
+                self._stop_all_playback()
+                self._break_intro_playing = False
+                self._set_interactive_mode()
+                self._middle_stack.setCurrentWidget(self._withyou_panel)
+                self._active_video_label = self._withyou_video
+                if self._withyou_path is not None:
+                    self._play_media(self._withyou_path, loop=True)
+                event.accept()
+                return
+            if self._end_outro_playing:
+                self._stop_all_playback()
+                self._end_outro_playing = False
+                self._enter_config(preserve_progress=False)
+                event.accept()
+                return
             if self._phase == "hangup":
+                self._stop_all_playback()
                 self.close()
                 event.accept()
                 return
@@ -1176,8 +1244,7 @@ class WithYouWindow(QDialog):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._tick.stop()
-        self._player.stop()
-        self._sfx_player.stop()
+        self._stop_all_playback()
         if self._mini_bar is not None and self._mini_bar.isVisible():
             self._mini_bar.close()
         if self._note_window is not None and self._note_window.isVisible():
