@@ -13,6 +13,7 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Resolve-Path (Join-Path $ScriptDir "..")
 $ReleaseDir = Join-Path $ProjectRoot "release"
 $BuildDir = Join-Path $ScriptDir "build"
+$ResourceStageDir = Join-Path $BuildDir "resources_win_pack"
 $AppName = "Fleet Snowfluff"
 
 if (-not $Version) {
@@ -61,6 +62,43 @@ function Resolve-Iscc {
     throw "Inno Setup compiler (ISCC.exe) not found. Install Inno Setup 6 first."
 }
 
+function Resolve-ResourcesDir {
+    $candidates = @(
+        (Join-Path $ProjectRoot "resources"),
+        (Join-Path (Resolve-Path (Join-Path $ProjectRoot "..")) "resources")
+    )
+    foreach ($path in $candidates) {
+        if (Test-Path $path -PathType Container) {
+            return (Resolve-Path $path).Path
+        }
+    }
+    throw "Could not locate resources directory."
+}
+
+function New-ResourceStageOnlyMp4 {
+    param(
+        [string]$SourceDir,
+        [string]$TargetDir
+    )
+
+    if (Test-Path $TargetDir) {
+        Remove-Item $TargetDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    New-Item -ItemType Directory -Path $TargetDir -Force | Out-Null
+
+    # Copy everything except .mov files.
+    Get-ChildItem -Path $SourceDir -Recurse -File | ForEach-Object {
+        $relative = $_.FullName.Substring($SourceDir.Length).TrimStart("\", "/")
+        if ($_.Extension -ieq ".mov") { return }
+        $dest = Join-Path $TargetDir $relative
+        $destDir = Split-Path -Parent $dest
+        if (-not (Test-Path $destDir)) {
+            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+        }
+        Copy-Item $_.FullName $dest -Force
+    }
+}
+
 Write-Host "==> Sync dependencies"
 Push-Location $ScriptDir
 uv sync
@@ -76,13 +114,18 @@ Remove-Item $InstallerPath -Force -ErrorAction SilentlyContinue
 Write-Host "==> Removing developer chat history"
 Remove-DeveloperData
 
+$ResourcesDir = Resolve-ResourcesDir
+
 if (-not $SkipVideoConvert) {
     $convertScript = Join-Path $ProjectRoot "windows-toolkit\convert_mov_to_mp4.ps1"
     if (Test-Path $convertScript) {
         Write-Host "==> Converting .mov videos to .mp4"
-        & $convertScript -Root (Join-Path $ProjectRoot "resources\Call") -Recurse
+        & $convertScript -Root (Join-Path $ResourcesDir "Call") -Recurse
     }
 }
+
+Write-Host "==> Preparing resources (mp4 only for videos)"
+New-ResourceStageOnlyMp4 -SourceDir $ResourcesDir -TargetDir $ResourceStageDir
 
 Write-Host "==> Building app with PyInstaller"
 $pyiArgs = @(
@@ -94,7 +137,7 @@ $pyiArgs = @(
     "--workpath", $BuildDir,
     "--specpath", $ScriptDir,
     "--name", $AppName,
-    "--add-data", "$ProjectRoot\resources;resources",
+    "--add-data", "$ResourceStageDir;resources",
     "--add-data", "$ScriptDir\config\FleetSnowfluff.json;resources/config",
     "$ScriptDir\main.py"
 )
@@ -142,6 +185,7 @@ $isccPath = Resolve-Iscc
 # Keep only installer output in release artifacts.
 Remove-Item $AppDistDir -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $IssPath -Force -ErrorAction SilentlyContinue
+Remove-Item $ResourceStageDir -Recurse -Force -ErrorAction SilentlyContinue
 
 Write-Host ""
 Write-Host "Release build complete:"

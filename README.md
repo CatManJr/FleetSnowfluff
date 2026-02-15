@@ -39,7 +39,7 @@ project-root/
 pip install uv
 ```
 
-然后进入源码目录并运行：
+然后进入源码目录并运行开发者模式：
 
 ```bash
 cd src
@@ -48,8 +48,51 @@ uv sync
 uv run main.py
 ```
 
-同样记得先准备 DeepSeek API Key，并在右键设置里填写。
+### 打包发布版
 
+发布版打包：
+```bash
+cd src
+./release_macos.sh       # 获得.app文件和.dmg 安装包
+```
+
+### Windows打包安装包
+
+当前脚本位置：
+
+- `src/windows-toolkit/convert_mov_to_mp4.ps1`
+- `src/windows-toolkit/release_windows.ps1`
+
+在 `src/` 目录执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\windows-toolkit\release_windows.ps1
+```
+
+该脚本会自动执行：
+
+1. `uv sync`
+2. 清理旧产物
+3. 调用 `convert_mov_to_mp4.ps1` 转码
+4. 仅打包 `mp4`（会过滤 `mov`）
+5. 生成 Windows 安装包（`.exe`）
+
+#### 视频换码+打包两步流程（可选）
+
+先人工确认转码结果，再打包：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\windows-toolkit\convert_mov_to_mp4.ps1 -Root ..\resources\Call -Recurse
+powershell -ExecutionPolicy Bypass -File .\windows-toolkit\release_windows.ps1 -SkipVideoConvert
+```
+
+#### 打包输出
+
+- 安装包输出到 `release/`
+- 产物名示例：`FleetSnowfluff-v1.0.2-Windows-Installer.exe`
+- 当前流程默认只保留安装包（不保留中间 app 目录）
+
+>如需测试聊天功能，同样记得先准备 DeepSeek API Key，并在右键设置里填写。
 > ⚠️ ：虽然我尽可能做了容器隔离和uv隔离，但开发环境仍建议您做好备份与隔离防止我的屎山污染您的本地路径。
 > ⚠️ ：Qt6 在 MacOS 上会频繁出现环境漂移，常见睡一觉起来“qt.qpa.plugin: Could not find the Qt platform plugin "cocoa" in <Your ENV>” 这里给出一个简单粗暴的解决方法：
 ```bash
@@ -101,4 +144,4 @@ Windows 版待开发，或请您安装开发者版本后自行封包
 2-12-2026（UTC-5）：优化飞行雪绒电台UI及交互设计，v0.1.5beta release  
 2-12-2026（UTC-5）：播片堆料完成。可切换DeepSeek通用对话/推理模式。优化飞行雪绒电台功能和交互设计。v1.0.2正式版发布。
 2-13-2026（UTC-5）：v1.1.0尝试加入番茄钟+备忘录。Windows版测试中。
-2-14-2026（UTC-5）：更新番茄钟功能。
+2-14-2026（UTC-5）：更新番茄钟功能。优化跨平台、不同分辨率下的字体和窗口尺寸显示问题。 更新Windows-toolkit。
