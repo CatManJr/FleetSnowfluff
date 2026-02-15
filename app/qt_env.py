@@ -8,6 +8,8 @@ from pathlib import Path
 def bootstrap_qt_plugin_paths() -> None:
     # Force deterministic low-noise runtime logs for end users.
     os.environ["QT_FFMPEG_DEBUG"] = "0"
+    # Avoid unstable HW decode paths on some macOS video sources.
+    os.environ["QT_FFMPEG_DECODING_HW_DEVICE_TYPES"] = ""
     os.environ["QT_LOGGING_RULES"] = (
         "*.debug=false;"
         "qt.multimedia.*=false;"

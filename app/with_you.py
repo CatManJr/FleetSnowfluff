@@ -307,6 +307,7 @@ class WithYouWindow(QDialog):
         self._start_intro_playing = False
         self._end_outro_playing = False
         self._cinematic_fill_mode = False
+        self._current_media_source = ""
 
         self._answer_path = self._pick_media(("answering.mov", "answering.mp4", "answering.MOV", "answering.MP4"))
         self._hangup_path = self._pick_media(("hangup.mov", "hangup.mp4", "hangup.MOV", "hangup.MP4"))
@@ -734,13 +735,26 @@ class WithYouWindow(QDialog):
         return None
 
     def _play_media(self, media_path: Path, *, loop: bool) -> None:
+        resolved = str(media_path.resolve())
+        if (
+            self._current_media_source == resolved
+            and self._loop_video == loop
+            and self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+        ):
+            return
         self._loop_video = loop
         self._player.stop()
-        self._player.setSource(QUrl.fromLocalFile(str(media_path)))
+        # Force-detach previous stream before switching to new media.
+        self._player.setSource(QUrl())
+        self._current_media_source = resolved
+        self._player.setSource(QUrl.fromLocalFile(resolved))
         self._player.play()
 
     def _stop_all_playback(self) -> None:
+        self._loop_video = False
         self._player.stop()
+        self._player.setSource(QUrl())
+        self._current_media_source = ""
         self._sfx_player.stop()
 
     def _play_start_sfx(self) -> None:
