@@ -243,8 +243,8 @@ class MiniCallBar(QDialog):
     @staticmethod
     def _default_theme_tokens() -> dict[str, str]:
         return {
-            "mini_panel_a": "#ffdfe9",
-            "mini_panel_b": "#ffe7f1",
+            "mini_panel_a": "#fff4f6",
+            "mini_panel_b": "#ffe9ef",
             "mini_panel_border": "rgba(255, 190, 176, 215)",
             "mini_text": "#4c5b67",
             "mini_focus": "#2f9e67",
@@ -1192,7 +1192,7 @@ class WithYouWindow(QDialog):
             "config_window_bg": "#eef2f6",
             "settings_panel_bg": "#ffeadc",
             "status_text": "#f1f5f9",
-            "round_text": "#c4d0df",
+            "round_text": "#8EC6F9",
             "tip_text": "#18222d",
             "settings_text": "#16212c",
             "unit_text": "#253342",
@@ -1200,7 +1200,7 @@ class WithYouWindow(QDialog):
             "card_bg_a": "rgba(245, 218, 227, 1)",
             "card_bg_b": "rgba(247, 249, 251, 1)",
             "card_border": "#ffffff",
-            "countdown": "#b5c9d9",
+            "countdown": "#8EC6F9",
             "input_bg": "rgba(245, 218, 227, 0.45)",
             "input_border": "rgba(255, 255, 255, 0.36)",
             "input_focus": "rgba(255, 255, 255, 0.62)",
@@ -1213,8 +1213,8 @@ class WithYouWindow(QDialog):
             "btn_pink_hover_bottom": "#ffedf5",
             "text_dark": "#111111",
             "font_family":" 'Source Han Sans SC', 'PingFang SC'",
-            "mini_panel_a": "rgba(255, 248, 245, 238)",
-            "mini_panel_b": "rgba(248, 249, 250, 238)",
+            "mini_panel_a": "rgba(255, 244, 246, 238)",
+            "mini_panel_b": "rgba(255, 233, 239, 238)",
             "mini_panel_border": "rgba(255, 190, 176, 215)",
             "mini_text": "#4c5b67",
             "mini_focus": "#2f9e67",
@@ -1968,6 +1968,12 @@ class WithYouWindow(QDialog):
             tray.setIcon(icon)
 
         menu = QMenu()
+        menu_font = menu.font()
+        if menu_font.pointSize() > 0:
+            menu_font.setPointSize(menu_font.pointSize() + 2)
+        elif menu_font.pixelSize() > 0:
+            menu_font.setPixelSize(menu_font.pixelSize() + 2)
+        menu.setFont(menu_font)
         stage_action = QAction("当前环节：设置中 · 00:00", menu)
         stage_action.setEnabled(False)
         expand_action = QAction("展开计时器", menu)

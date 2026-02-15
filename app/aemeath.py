@@ -680,7 +680,7 @@ class Aemeath(QLabel):
                 color: #7a2b4d;
             }
             """
-            % px(12, scale)
+            % px(14, scale)
         )
         self._chat_action = self._menu.addAction("打开飞讯")
         self._transform_action = self._menu.addAction("爱弥斯，变身！")

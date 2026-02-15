@@ -1,6 +1,6 @@
 [project]
 name = "FleetSnowfluff"
-version = "v1.1.2"
+version = "v1.2.0beta1"
 description = "Aemeath on your desktop."
 readme = "README.md"
 requires-python = ">=3.12"
