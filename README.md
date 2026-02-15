@@ -58,9 +58,8 @@ uv sync
 uv run main.py
 ```
 
-发布版打包器：
-下载安装[Inno Setup](https://jrsoftware.org/isdl.php)
-安装到默认路径即可。自定义安装请相应修改`src\windows-toolkit\release_windows.ps1`
+> ⚠️ ：Qt6 在 MacOS 上会频繁出现环境漂移，常见睡一觉起来“qt.qpa.plugin: Could not find the Qt platform plugin "cocoa" in <Your ENV>” 这里给出一个简单粗暴的解决方法：
+
 
 ### 打包发布版
 
@@ -69,6 +68,10 @@ uv run main.py
 cd src
 ./release_macos.sh       # 获得.app文件和.dmg 安装包
 ```
+
+Windows发布版打包器：
+下载安装[Inno Setup](https://jrsoftware.org/isdl.php)
+安装到默认路径即可。自定义安装请相应修改`src\windows-toolkit\release_windows.ps1`
 
 ### Windows开发者安装
 #### FFmpeg 配置
@@ -136,7 +139,7 @@ powershell -ExecutionPolicy Bypass -File .\windows-toolkit\release_windows.ps1 -
 
 >如需测试聊天功能，同样记得先准备 DeepSeek API Key，并在右键设置里填写。  
 > ⚠️ ：虽然我尽可能做了容器隔离和uv隔离，但开发环境仍建议您做好备份与隔离防止我的屎山污染您的本地路径。  
-> ⚠️ ：Qt6 在 MacOS 上会频繁出现环境漂移，常见睡一觉起来“qt.qpa.plugin: Could not find the Qt platform plugin "cocoa" in <Your ENV>” 这里给出一个简单粗暴的解决方法：
+
 ```bash
 uv cache clean pyside6 pyside6-addons pyside6-essentials shiboken6 && rm -rf ".venv" && uv sync
 ```
@@ -152,8 +155,14 @@ uv cache clean pyside6 pyside6-addons pyside6-essentials shiboken6 && rm -rf ".v
 ### 左键菜单/MacOS 顶部托盘 📌
 
 - `打开飞讯`：打开聊天窗口（DeepSeek + 人设JSON 注入）。支持修改回答内容和编辑聊天记录。  
-  ⚠️ OOC（出戏）是没有微调的大模型通病，建议先“热身几轮”让模型获得更多聊天样例稳定人设。
-  点击通话模式进入番茄钟。番茄钟有丰富的小爱通讯堆料哦！
+  ⚠️ OOC（出戏）是没有微调的大模型通病，建议先“热身几轮”让模型获得更多聊天样例稳定人设。  
+  点击通话模式进入伴随模式（番茄钟）。小爱通讯语音提醒包括：
+  - 一段接听
+  - 两段随机开始专注
+  - 三段随机开始休息
+  - 一段完成全部轮次提醒
+  - 一段挂断
+  - 专注模式伴随画面
 - `爱弥斯，变身！`：播放游戏待机动画。
 - `电子幽灵登场！`：启动终端。  
   💻 一起敲命令行！看看小爱说了什么吧～
@@ -185,3 +194,4 @@ uv cache clean pyside6 pyside6-addons pyside6-essentials shiboken6 && rm -rf ".v
 - 2-13-2026（UTC-5）：v1.1.0尝试加入番茄钟+备忘录。Windows版测试中。  
 - 2-14-2026（UTC-5）：更新番茄钟功能。优化跨平台、不同分辨率下的字体和窗口尺寸显示问题。 更新Windows-toolkit（打包工具）。
 - 2-15-2026（UTC-5）：MacOS 1.1.1 版本，增加刘海屏旁状态栏菜单，支持隐藏/显示飞行雪绒（跳动的GUI）。番茄钟 UI 待优化。
+- 2-15-2026（UTC-5）：MacOS 1.1.2 版本，新增两条提醒语音，修复专注模式悬浮窗状态刷新问题。
