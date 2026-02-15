@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QSize, Qt, QTimer, QUrl, Signal
@@ -308,6 +309,10 @@ class WithYouWindow(QDialog):
         self._end_outro_playing = False
         self._cinematic_fill_mode = False
         self._current_media_source = ""
+        # Heavy 4K frame scaling in Python can block UI when multiple windows are open.
+        # Limit render frequency to keep the event loop responsive.
+        self._last_frame_render_ts = 0.0
+        self._frame_interval_s = 1.0 / 20.0
 
         self._answer_path = self._pick_media(("answering.mov", "answering.mp4", "answering.MOV", "answering.MP4"))
         self._hangup_path = self._pick_media(("hangup.mov", "hangup.mp4", "hangup.MOV", "hangup.MP4"))
@@ -1042,6 +1047,10 @@ class WithYouWindow(QDialog):
         self._update_mini_bar_state()
 
     def _on_video_frame_changed(self, frame) -> None:
+        now = time.monotonic()
+        if (now - self._last_frame_render_ts) < self._frame_interval_s:
+            return
+        self._last_frame_render_ts = now
         if frame is None or not frame.isValid():
             return
         image = frame.toImage()
@@ -1064,7 +1073,7 @@ class WithYouWindow(QDialog):
         scaled = self._last_frame.scaled(
             self._active_video_label.size(),
             mode,
-            Qt.TransformationMode.SmoothTransformation,
+            Qt.TransformationMode.FastTransformation,
         )
         self._active_video_label.setPixmap(scaled)
 
