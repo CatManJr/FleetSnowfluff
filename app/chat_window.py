@@ -187,6 +187,37 @@ class ChatWindow(QDialog):
         return px(value, self._ui_scale())
 
     @staticmethod
+    def _chat_theme_tokens() -> dict[str, str]:
+        return {
+            "bg_dialog": "#f6f8fb",
+            "text_primary": "#1f2a36",
+            "text_muted": "#667788",
+            "panel": "#ffffff",
+            "panel_soft": "#fff5f9",
+            "panel_border": "#d9e2eb",
+            "accent_top": "#fff5f9",
+            "accent_bottom": "#ffe7f1",
+            "accent_border": "#e7bfd1",
+            "accent_border_pressed": "#d8a8bf",
+            "accent_hover_top": "#fff9fc",
+            "accent_hover_bottom": "#ffedf5",
+            "send_top": "#ff9e8b",
+            "send_bottom": "#ff6b6b",
+            "send_border": "#ea6f6f",
+            "send_hover_top": "#ffb09f",
+            "send_hover_bottom": "#ff7f7f",
+            "timeline_bg": "#fffafd",
+            "timeline_item_user_top": "#ffe8f2",
+            "timeline_item_user_bottom": "#ffd9e8",
+            "timeline_item_user_border": "#e2abc3",
+            "timeline_item_assistant_top": "#ffffff",
+            "timeline_item_assistant_bottom": "#f6f8fb",
+            "timeline_item_assistant_border": "#d7e0e9",
+            "timestamp": "#8b96a6",
+            "font_family": '"思源黑体-Bold", "Source Han Sans SC", "PingFang SC"',
+        }
+
+    @staticmethod
     def _load_send_icon(icon_path: Path) -> QIcon | None:
         image = QImage(str(icon_path))
         if image.isNull():
@@ -325,15 +356,19 @@ class ChatWindow(QDialog):
     def _apply_scaled_stylesheet(self, scale: float | None = None) -> None:
         scale = self._ui_scale() if scale is None else scale
         btn = px(52, scale)
+        t = self._chat_theme_tokens()
         self.setStyleSheet(
             f"""
             QDialog {{
-                background: #fff7fb;
-                color: #2a1f2a;
+                background: {t["bg_dialog"]};
+                color: {t["text_primary"]};
+            }}
+            QLabel, QPushButton, QPlainTextEdit, QListWidget {{
+                font-family: {t["font_family"]};
             }}
             QFrame#navBar {{
-                background: #ffffff;
-                border-bottom: 1px solid #ffd3e6;
+                background: {t["panel"]};
+                border-bottom: 1px solid {t["panel_border"]};
             }}
             QLabel#avatarBadge {{
                 min-width: 42px;
@@ -341,11 +376,11 @@ class ChatWindow(QDialog):
                 max-width: 42px;
                 max-height: 42px;
                 border-radius: 21px;
-                background: #ff5fa2;
-                color: #ffffff;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {t["send_top"]}, stop:1 {t["send_bottom"]});
+                color: #111111;
                 font-weight: 700;
                 qproperty-alignment: AlignCenter;
-                border: 2px solid #ffc2de;
+                border: 2px solid {t["accent_border"]};
             }}
             QLabel#onlineDot {{
                 min-width: 12px;
@@ -359,40 +394,63 @@ class ChatWindow(QDialog):
             QLabel#navTitle {{
                 font-size: {px(18, scale)}px;
                 font-weight: 700;
-                color: #221626;
+                color: {t["text_primary"]};
             }}
             QLabel#navSubtitle {{
                 font-size: {px(12, scale)}px;
-                color: #9a6b85;
+                color: {t["text_muted"]};
             }}
             QPushButton#navActionButton {{
-                background: #fff0f7;
-                border: 2px solid #ff9dc6;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {t["accent_top"]}, stop:1 {t["accent_bottom"]});
+                border: 1px solid {t["accent_border"]};
+                border-bottom: 2px solid {t["accent_border_pressed"]};
                 border-radius: 10px;
-                color: #8d365d;
-                padding: 4px 8px;
+                color: #111111;
+                padding: 5px 9px;
                 font-size: {px(15, scale)}px;
+                font-weight: 700;
+            }}
+            QPushButton#navActionButton:hover {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:0, y2:1,
+                    stop:0 {t["accent_hover_top"]},
+                    stop:1 {t["accent_hover_bottom"]}
+                );
+            }}
+            QPushButton#navActionButton:pressed {{
+                border-bottom: 1px solid {t["accent_border_pressed"]};
+                padding-top: 6px;
+                padding-bottom: 4px;
             }}
             QFrame#panelCard {{
-                background: #fff7fb;
+                background: {t["panel_soft"]};
                 border: none;
             }}
             QListWidget#chatTimeline {{
-                background: #fff7fb;
-                border: none;
-                color: #2a1f2a;
+                background: {t["timeline_bg"]};
+                border: 1px solid {t["panel_border"]};
+                border-radius: 14px;
+                color: {t["text_primary"]};
+                outline: none;
+            }}
+            QListWidget#chatTimeline:focus {{
+                border: 1px solid {t["accent_border"]};
             }}
             QFrame#composerBar {{
-                background: #ffffff;
-                border-top: 1px solid #ffd3e6;
+                background: {t["panel"]};
+                border-top: 1px solid {t["panel_border"]};
             }}
             QPlainTextEdit#composerInput {{
-                background: #fff2f8;
-                border: 2px solid #ffb3d4;
+                background: #ffffff;
+                border: 1px solid {t["panel_border"]};
                 border-radius: 16px;
                 padding: 8px;
-                color: #2a1f2a;
+                color: {t["text_primary"]};
                 font-size: {px(16, scale)}px;
+            }}
+            QPlainTextEdit#composerInput:focus {{
+                border: 2px solid {t["send_top"]};
+                background: #fff9fc;
             }}
             QPushButton#sendButton {{
                 min-width: {btn}px;
@@ -401,25 +459,36 @@ class ChatWindow(QDialog):
                 max-height: {btn}px;
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #ff5fa2,
-                    stop:1 #ff8cc3
+                    stop:0 {t["send_top"]},
+                    stop:1 {t["send_bottom"]}
                 );
-                border: 2px solid #ff4f98;
+                border: 1px solid {t["send_border"]};
                 border-radius: 16px;
-                color: #ffffff;
+                color: #111111;
                 font-weight: 600;
                 font-size: {px(20, scale)}px;
                 padding: 0px;
             }}
+            QPushButton#sendButton:hover {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 {t["send_hover_top"]},
+                    stop:1 {t["send_hover_bottom"]}
+                );
+            }}
+            QPushButton#sendButton:pressed {{
+                padding-top: 2px;
+            }}
             QPushButton:disabled {{
-                background: #f3dbe8;
-                border-color: #e8bfd3;
-                color: #a68596;
+                background: #f0e3ea;
+                border-color: #dbc5d1;
+                color: #8f8089;
             }}
             """
         )
 
     def _add_chat_bubble(self, role: str, text: str, ts: str, pending: bool = False) -> int:
+        t = self._chat_theme_tokens()
         should_autoscroll = self._should_autoscroll_chat()
         item = QListWidgetItem(self.chat_list)
         wrapper = QWidget()
@@ -433,7 +502,7 @@ class ChatWindow(QDialog):
         side_layout.setSpacing(4)
 
         time_label = QLabel(ts, side)
-        time_label.setStyleSheet(f"color:#9ba3c7; font-size:{self._px(11)}px;")
+        time_label.setStyleSheet(f"color:{t['timestamp']}; font-size:{self._px(11)}px;")
         if role == "user":
             time_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         else:
@@ -456,15 +525,15 @@ class ChatWindow(QDialog):
 
         if role == "user":
             bubble.setStyleSheet(
-                """
+                f"""
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #ff5fa2,
-                    stop:1 #ff8cc3
+                    stop:0 {t["timeline_item_user_top"]},
+                    stop:1 {t["timeline_item_user_bottom"]}
                 );
-                border: 2px solid #ff4f98;
+                border: 1px solid {t["timeline_item_user_border"]};
                 border-radius: 12px;
-                color: #ffffff;
+                color: #1b2530;
                 """
             )
             row.addStretch(1)
@@ -472,11 +541,15 @@ class ChatWindow(QDialog):
             row.addWidget(side)
         else:
             bubble.setStyleSheet(
-                """
-                background:#fff0f7;
-                border: 2px solid #ffb7d6;
+                f"""
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 {t["timeline_item_assistant_top"]},
+                    stop:1 {t["timeline_item_assistant_bottom"]}
+                );
+                border: 1px solid {t["timeline_item_assistant_border"]};
                 border-radius:12px;
-                color:#2b1c2a;
+                color:#1f2a36;
                 """
             )
             side_layout.addWidget(bubble)

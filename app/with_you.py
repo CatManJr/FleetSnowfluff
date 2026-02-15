@@ -4,20 +4,28 @@ import random
 import sys
 import time
 from pathlib import Path
+from typing import Union, cast
 
-from PySide6.QtCore import QPoint, QSize, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QIcon, QKeyEvent, QMouseEvent, QPainter, QPen, QPixmap
-from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
+from PySide6.QtCore import QPoint, QSettings, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QAction, QCloseEvent, QColor, QIcon, QKeyEvent, QMouseEvent, QPainter, QPen, QPixmap
+from PySide6.QtMultimedia import QAudioDevice, QAudioOutput, QMediaPlayer, QMediaDevices, QVideoSink
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMenu,
     QMessageBox,
     QPushButton,
+    QGraphicsDropShadowEffect,
+    QScrollArea,
     QSizePolicy,
+    QSlider,
     QSpinBox,
     QStackedWidget,
     QSystemTrayIcon,
@@ -155,8 +163,9 @@ class MiniCallBar(QDialog):
     chatRequested = Signal()
     hangupRequested = Signal()
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, theme_tokens: dict[str, str] | None = None) -> None:
         super().__init__(parent)
+        self._theme_tokens = dict(theme_tokens or self._default_theme_tokens())
         self._drag_offset: QPoint | None = None
         self.setWindowTitle("通话悬浮条")
         self.setWindowFlags(
@@ -222,56 +231,119 @@ class MiniCallBar(QDialog):
         root.addWidget(panel, 1)
         app = QApplication.instance()
         scale = current_app_scale(app) if app is not None else 1.0
+        self._scale = scale
+        panel_shadow = QGraphicsDropShadowEffect(panel)
+        panel_shadow.setBlurRadius(px(26, scale))
+        panel_shadow.setOffset(0, px(3, scale))
+        panel_shadow.setColor(QColor(31, 44, 59, 38))
+        panel.setGraphicsEffect(panel_shadow)
 
-        self.setStyleSheet(
-            """
-            QFrame#miniPanel {
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:1,
-                    stop:0 rgba(255, 245, 251, 225),
-                    stop:1 rgba(255, 232, 245, 225)
-                );
-                border: 1px solid rgba(255, 172, 214, 190);
+        self.setStyleSheet(self._build_stylesheet(scale))
+
+    @staticmethod
+    def _default_theme_tokens() -> dict[str, str]:
+        return {
+            "mini_panel_a": "rgba(255, 248, 245, 238)",
+            "mini_panel_b": "rgba(248, 249, 250, 238)",
+            "mini_panel_border": "rgba(255, 190, 176, 215)",
+            "mini_text": "#4c5b67",
+            "mini_focus": "#2f9e67",
+            "mini_break": "#d89a18",
+            "mini_pause": "#6c7a89",
+            "mini_config": "#5f6f82",
+            "mini_hangup": "#d9534f",
+            "mini_timer": "#ff6b6b",
+            "mini_btn_a": "#ffffff",
+            "mini_btn_b": "#f8f9fa",
+            "mini_btn_border": "rgba(219, 224, 229, 220)",
+            "mini_btn_text": "#111111",
+            "mini_btn_hover": "rgba(255, 158, 139, 220)",
+            "mini_btn_pressed": "#eef1f4",
+            "mini_danger_a": "#fff0f5",
+            "mini_danger_b": "#ffe2ed",
+            "mini_danger_border": "#e5b0c7",
+            "mini_danger_text": "#111111",
+            "mini_danger_hover_a": "#fff4f8",
+            "mini_danger_hover_b": "#ffe8f0",
+            "mini_danger_pressed_a": "#ffe8f1",
+            "mini_danger_pressed_b": "#ffdbe8",
+            "font_family": '"思源黑体-Bold", "Source Han Sans SC", "PingFang SC"',
+        }
+
+    def _build_stylesheet(self, scale: float) -> str:
+        t = self._theme_tokens
+        return f"""
+            QFrame#miniPanel {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {t["mini_panel_a"]}, stop:1 {t["mini_panel_b"]});
+                border: 1px solid {t["mini_panel_border"]};
                 border-radius: 20px;
-            }
-            QLabel#miniStatus {
-                color: #7f3154;
-                font-size: %dpx;
+            }}
+            QLabel#miniStatus, QLabel#miniTimer, QPushButton {{
+                font-family: {t["font_family"]};
+            }}
+            QLabel#miniStatus {{
+                color: {t["mini_text"]};
+                font-size: {px(12, scale)}px;
                 font-weight: 700;
-            }
-            QLabel#miniTimer {
-                color: #c13c83;
-                font-size: %dpx;
+            }}
+            QLabel#miniStatus[miniState="focus"] {{ color: {t["mini_focus"]}; }}
+            QLabel#miniStatus[miniState="break"] {{ color: {t["mini_break"]}; }}
+            QLabel#miniStatus[miniState="pause"] {{ color: {t["mini_pause"]}; }}
+            QLabel#miniStatus[miniState="config"] {{ color: {t["mini_config"]}; }}
+            QLabel#miniStatus[miniState="hangup"] {{ color: {t["mini_hangup"]}; }}
+            QLabel#miniTimer {{
+                color: {t["mini_timer"]};
+                font-size: {px(16, scale)}px;
                 font-weight: 800;
-            }
-            QPushButton#miniBtn {
-                background: rgba(255, 255, 255, 205);
-                border: none;
+            }}
+            QPushButton#miniBtn {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {t["mini_btn_a"]}, stop:1 {t["mini_btn_b"]});
+                border: 1px solid {t["mini_btn_border"]};
                 border-radius: 12px;
-                color: #8d365d;
+                color: {t["mini_btn_text"]};
                 min-width: 44px;
                 min-height: 28px;
                 padding: 2px 8px;
-            }
-            QPushButton#miniDanger {
-                background: rgba(255, 219, 235, 220);
-                border: none;
+            }}
+            QPushButton#miniBtn:hover {{ border-color: {t["mini_btn_hover"]}; }}
+            QPushButton#miniBtn:pressed {{ background: {t["mini_btn_pressed"]}; }}
+            QPushButton#miniDanger {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {t["mini_danger_a"]}, stop:1 {t["mini_danger_b"]});
+                border: 1px solid {t["mini_danger_border"]};
                 border-radius: 12px;
-                color: #ad2e70;
+                color: {t["mini_danger_text"]};
                 min-width: 44px;
                 min-height: 28px;
                 padding: 2px 8px;
                 font-weight: 700;
-            }
-            """
-            % (px(12, scale), px(16, scale))
-        )
+            }}
+            QPushButton#miniDanger:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {t["mini_danger_hover_a"]}, stop:1 {t["mini_danger_hover_b"]});
+            }}
+            QPushButton#miniDanger:pressed {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {t["mini_danger_pressed_a"]}, stop:1 {t["mini_danger_pressed_b"]});
+            }}
+        """
 
     def set_countdown(self, text: str) -> None:
         self.timer_label.setText(text)
 
     def set_status(self, text: str) -> None:
         self.status_label.setText(text)
+        state = "config"
+        if "专注" in text:
+            state = "focus"
+        elif "休息" in text:
+            state = "break"
+        elif "暂停" in text:
+            state = "pause"
+        elif "结束" in text:
+            state = "hangup"
+        self.status_label.setProperty("miniState", state)
+        style = self.status_label.style()
+        if style is not None:
+            style.unpolish(self.status_label)
+            style.polish(self.status_label)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -348,7 +420,6 @@ class WithYouWindow(QDialog):
                 "break2.mov",
                 "break2.mp4",
                 "break2.MOV",
-                "break2:.MP4",
                 "break2.MP4",
                 "break3.mov",
                 "break3.mp4",
@@ -364,12 +435,23 @@ class WithYouWindow(QDialog):
                 "end.mp4",
                 "end.MOV",
                 "end.MP4",
+                "end2.mov",
+                "end2.mp4",
+                "end2.MOV",
+                "end2.MP4",
             )
         )
         self._start_sfx_path = self._pick_media(("start.mp3", "start.MP3", "start.wav", "start.WAV"))
         self._withyou_path = self._pick_media(
             ("withyou.mov", "withyou.mp4", "with_you.mov", "with_you.mp4", "withyou.MOV", "withyou.MP4")
         )
+        self._noise_dir = self._call_dir / "noise"
+        self._bgm_dir = self._call_dir / "bgm"
+        self._noise_path: Path | None = self._first_audio_in_dir(self._noise_dir)
+        self._with_you_settings = QSettings("FleetSnowfluff", "WithYou")
+        self._bgm_playlist: list[str] = []
+        self._bgm_index = 0
+        self._bgm_seek_block = False
 
         self.setWindowTitle("专注通话")
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.Tool)
@@ -398,11 +480,12 @@ class WithYouWindow(QDialog):
         interactive_root.setContentsMargins(0, 0, 0, 0)
         interactive_root.setSpacing(0)
 
-        # Top: extra info
-        top_bar = QFrame(self._interactive_page)
-        top_bar.setObjectName("topBar")
-        top_box = QVBoxLayout(top_bar)
-        top_box.setContentsMargins(12, 8, 12, 8)
+        # Top: 上栏按内容自适应，保证轮次计数器不被挤压
+        self._top_bar = QFrame(self._interactive_page)
+        self._top_bar.setObjectName("topBar")
+        self._top_bar.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        top_box = QVBoxLayout(self._top_bar)
+        top_box.setContentsMargins(8, 6, 8, 6)
         top_box.setSpacing(4)
         top_row = QHBoxLayout()
         top_row.setContentsMargins(0, 0, 0, 0)
@@ -416,7 +499,7 @@ class WithYouWindow(QDialog):
         self.settings_btn.setToolTip("返回番茄钟设置")
         self.settings_btn.clicked.connect(self._back_to_settings)
         self.chat_btn = QPushButton("聊天窗口")
-        self.chat_btn.setObjectName("ghostBtn")
+        self.chat_btn.setObjectName("chocoBtn")
         self.chat_btn.setToolTip("呼出飞讯聊天窗口")
         self.chat_btn.clicked.connect(self._request_chat_window)
         self.mini_btn = QPushButton("悬浮条")
@@ -447,15 +530,20 @@ class WithYouWindow(QDialog):
         top_box.addLayout(top_row)
         top_box.addLayout(round_row)
 
+        # Middle: 中间播片/设置，占据剩余空间，高度由 _sync_middle_height 保证不重叠
         # Middle: settings panel OR withyou video panel
         self._middle_stack = QStackedWidget(self._interactive_page)
 
         self._settings_panel = QFrame(self._interactive_page)
+        self._settings_panel.setObjectName("settingsPanel")
         settings_layout = QVBoxLayout(self._settings_panel)
         settings_layout.setContentsMargins(14, 14, 14, 14)
         settings_layout.setSpacing(10)
         tip = QLabel("设置轮次与每轮时间")
         tip.setObjectName("tipLabel")
+        divider = QFrame(self._settings_panel)
+        divider.setObjectName("settingsDivider")
+        divider.setFixedHeight(1)
         settings_rows = QVBoxLayout()
         settings_rows.setContentsMargins(0, 0, 0, 0)
         settings_rows.setSpacing(10)
@@ -547,6 +635,7 @@ class WithYouWindow(QDialog):
         settings_rows.addWidget(rounds_card, 1)
         settings_rows.addWidget(focus_card, 1)
         settings_rows.addWidget(break_card, 1)
+
         self.start_btn = QPushButton("开始专注")
         self.start_btn.setObjectName("primaryBtn")
         self.start_btn.setToolTip("开始番茄钟计时")
@@ -557,6 +646,7 @@ class WithYouWindow(QDialog):
         self.return_btn.clicked.connect(self._return_to_running_without_changes)
         self.return_btn.setVisible(False)
         settings_layout.addWidget(tip)
+        settings_layout.addWidget(divider)
         settings_layout.addLayout(settings_rows, 1)
         settings_actions = QHBoxLayout()
         settings_actions.setContentsMargins(0, 0, 0, 0)
@@ -567,6 +657,13 @@ class WithYouWindow(QDialog):
         settings_actions.addWidget(self.start_btn, 1)
         settings_layout.addLayout(settings_actions)
 
+        self._settings_scroll = QScrollArea(self._interactive_page)
+        self._settings_scroll.setObjectName("settingsPanel")
+        self._settings_scroll.setWidgetResizable(True)
+        self._settings_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._settings_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._settings_scroll.setWidget(self._settings_panel)
+
         self._withyou_panel = QFrame(self._interactive_page)
         withyou_layout = QVBoxLayout(self._withyou_panel)
         withyou_layout.setContentsMargins(0, 0, 0, 0)
@@ -575,54 +672,69 @@ class WithYouWindow(QDialog):
         self._withyou_video.setStyleSheet("background: transparent; border-radius: 18px;")
         withyou_layout.addWidget(self._withyou_video, 1)
 
-        self._middle_stack.addWidget(self._settings_panel)
+        self._middle_stack.addWidget(self._settings_scroll)
         self._middle_stack.addWidget(self._withyou_panel)
 
-        # Bottom: center countdown, right memo button
+        # Bottom: 噪声 | 计时器 | BGM，下方为操作按钮；下栏按内容自适应
         bottom_bar = QFrame(self._interactive_page)
         bottom_bar.setObjectName("bottomBar")
+        bottom_bar.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         bottom_box = QVBoxLayout(bottom_bar)
         bottom_box.setContentsMargins(12, 8, 12, 8)
         bottom_box.setSpacing(8)
         self.countdown_label = QLabel("00:00")
         self.countdown_label.setObjectName("countdownLabel")
+        self._noise_btn = QPushButton("噪声", bottom_bar)
+        self._noise_btn.setObjectName("ghostBtn")
+        self._noise_btn.setToolTip("背景噪声开关与音量")
+        self._noise_btn.clicked.connect(self._open_noise_popup)
+        self._bgm_btn = QPushButton("BGM", bottom_bar)
+        self._bgm_btn.setObjectName("ghostBtn")
+        self._bgm_btn.setToolTip("背景音乐开关与音量")
+        self._bgm_btn.clicked.connect(self._open_bgm_popup)
         self.note_btn = QPushButton("便利贴")
-        self.note_btn.setObjectName("ghostBtn")
+        self.note_btn.setObjectName("chocoBtn")
         self.note_btn.setToolTip("打开便利贴")
         self.note_btn.clicked.connect(self._open_note_window)
         self.pause_btn = QPushButton("暂停")
-        self.pause_btn.setObjectName("ghostBtn")
+        self.pause_btn.setObjectName("chocoBtn")
         self.pause_btn.setToolTip("暂停或继续计时")
         self.pause_btn.clicked.connect(self._toggle_pause)
         self.skip_btn = QPushButton("跳过")
-        self.skip_btn.setObjectName("ghostBtn")
+        self.skip_btn.setObjectName("chocoBtn")
         self.skip_btn.setToolTip("跳过当前环节")
         self.skip_btn.clicked.connect(self._skip_current_stage)
         timer_wrap = QWidget(bottom_bar)
         timer_row = QHBoxLayout(timer_wrap)
         timer_row.setContentsMargins(0, 0, 0, 0)
         timer_row.setSpacing(8)
+        timer_row.addWidget(self._noise_btn)
         timer_row.addStretch(1)
         timer_row.addWidget(self.countdown_label)
         timer_row.addStretch(1)
+        timer_row.addWidget(self._bgm_btn)
 
-        buttons_row = QHBoxLayout()
-        buttons_row.setContentsMargins(0, 0, 0, 0)
-        buttons_row.setSpacing(10)
+        buttons_grid = QGridLayout()
+        buttons_grid.setContentsMargins(2, 2, 2, 2)
+        buttons_grid.setHorizontalSpacing(8)
+        buttons_grid.setVerticalSpacing(8)
         self.chat_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.pause_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.skip_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.note_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        buttons_row.addWidget(self.chat_btn, 1)
-        buttons_row.addWidget(self.pause_btn, 1)
-        buttons_row.addWidget(self.skip_btn, 1)
-        buttons_row.addWidget(self.note_btn, 1)
+        buttons_grid.addWidget(self.chat_btn, 0, 0)
+        buttons_grid.addWidget(self.pause_btn, 0, 1)
+        buttons_grid.addWidget(self.skip_btn, 1, 0)
+        buttons_grid.addWidget(self.note_btn, 1, 1)
+        buttons_grid.setColumnStretch(0, 1)
+        buttons_grid.setColumnStretch(1, 1)
         bottom_box.addWidget(timer_wrap)
-        bottom_box.addLayout(buttons_row)
+        bottom_box.addLayout(buttons_grid)
 
-        interactive_root.addWidget(top_bar)
+        self._bottom_bar = bottom_bar
+        interactive_root.addWidget(self._top_bar)
         interactive_root.addWidget(self._middle_stack, 1)
-        interactive_root.addWidget(bottom_bar)
+        interactive_root.addWidget(self._bottom_bar)
         self._stack.addWidget(self._interactive_page)
         self._sync_middle_height()
 
@@ -634,6 +746,21 @@ class WithYouWindow(QDialog):
         self._sfx_audio.setVolume(1.0)
         self._sfx_player = QMediaPlayer(self)
         self._sfx_player.setAudioOutput(self._sfx_audio)
+        self._ambient_audio = QAudioOutput(self)
+        _default_out = QMediaDevices.defaultAudioOutput()
+        if not _default_out.isNull():
+            self._ambient_audio.setDevice(_default_out)
+        self._ambient_player = QMediaPlayer(self)
+        self._ambient_player.setAudioOutput(self._ambient_audio)
+        self._ambient_player.mediaStatusChanged.connect(self._on_ambient_status_changed)
+        self._bgm_audio = QAudioOutput(self)
+        if not _default_out.isNull():
+            self._bgm_audio.setDevice(_default_out)
+        self._bgm_player = QMediaPlayer(self)
+        self._bgm_player.setAudioOutput(self._bgm_audio)
+        self._bgm_player.positionChanged.connect(self._on_bgm_position_changed)
+        self._bgm_player.durationChanged.connect(self._on_bgm_duration_changed)
+        self._bgm_player.mediaStatusChanged.connect(self._on_bgm_media_status_changed)
         self._sink = QVideoSink(self)
         self._sink.videoFrameChanged.connect(self._on_video_frame_changed)
         self._player.setVideoOutput(self._sink)
@@ -646,151 +773,522 @@ class WithYouWindow(QDialog):
         self._apply_icon_buttons()
         app = QApplication.instance()
         scale = current_app_scale(app) if app is not None else 1.0
+        self._apply_soft_shadow(rounds_card, px(22, scale), px(2, scale), alpha=30)
+        self._apply_soft_shadow(focus_card, px(22, scale), px(2, scale), alpha=30)
+        self._apply_soft_shadow(break_card, px(22, scale), px(2, scale), alpha=30)
 
-        self.setStyleSheet(
-            """
-            QDialog {
-                background: #fff7fb;
-                color: #2a1f2a;
-            }
-            QFrame#topBar, QFrame#bottomBar {
-                background: #ffffff;
-                border-bottom: 1px solid #ffd3e6;
-            }
-            QFrame#bottomBar {
+        self.setStyleSheet(self._build_focus_stylesheet(scale))
+        self._build_noise_popup()
+        self._build_bgm_popup()
+        self._set_view_mode("config")
+        self._load_ambient_state()
+        self._load_bgm_state()
+
+    def _ui_scale(self) -> float:
+        app = QApplication.instance()
+        return current_app_scale(app) if app is not None else 1.0
+
+    def _load_ambient_state(self) -> None:
+        enabled = self._with_you_settings.value("ambient/enabled", True)
+        if isinstance(enabled, bool):
+            self._ambient_enabled_cb.setChecked(enabled)
+        else:
+            self._ambient_enabled_cb.setChecked(enabled not in (0, "0", "false", "no"))
+        vol = self._with_you_settings.value("ambient/volume", 50)
+        v = 50
+        try:
+            if vol is not None:
+                v = int(cast(Union[int, str], vol))
+        except (TypeError, ValueError):
+            pass
+        self._ambient_volume_slider.setValue(max(0, min(100, v)))
+        self._on_ambient_volume_changed(self._ambient_volume_slider.value())
+
+    def _save_ambient_state(self) -> None:
+        self._with_you_settings.setValue("ambient/enabled", self._ambient_enabled_cb.isChecked())
+        self._with_you_settings.setValue("ambient/volume", self._ambient_volume_slider.value())
+
+    def _load_bgm_state(self) -> None:
+        self._refresh_bgm_playlist()
+        enabled_bgm = self._with_you_settings.value("bgm/enabled", True)
+        if isinstance(enabled_bgm, bool):
+            self._bgm_enabled_cb.setChecked(enabled_bgm)
+        else:
+            self._bgm_enabled_cb.setChecked(enabled_bgm not in (0, "0", "false", "no"))
+        vol_bgm = self._with_you_settings.value("bgm/volume", 60)
+        v_bgm = 60
+        try:
+            if vol_bgm is not None:
+                v_bgm = int(cast(Union[int, str], vol_bgm))
+        except (TypeError, ValueError):
+            pass
+        self._bgm_volume_slider.setValue(max(0, min(100, v_bgm)))
+        self._on_bgm_volume_changed(self._bgm_volume_slider.value())
+        loop = self._with_you_settings.value("bgm/loop", True)
+        self._bgm_loop_cb.setChecked(loop if isinstance(loop, bool) else str(loop).lower() not in ("0", "false", "no"))
+        idx_raw = self._with_you_settings.value("bgm/index", 0)
+        idx_int = 0
+        try:
+            if idx_raw is not None:
+                idx_int = int(cast(Union[int, str], idx_raw))
+        except (TypeError, ValueError):
+            pass
+        self._bgm_index = max(0, min(len(self._bgm_playlist) - 1, idx_int))
+        if self._bgm_playlist:
+            self._bgm_list.blockSignals(True)
+            self._bgm_list.setCurrentRow(self._bgm_index)
+            self._bgm_list.blockSignals(False)
+
+    def _save_bgm_state(self) -> None:
+        self._with_you_settings.setValue("bgm/enabled", self._bgm_enabled_cb.isChecked())
+        self._with_you_settings.setValue("bgm/volume", self._bgm_volume_slider.value())
+        self._with_you_settings.setValue("bgm/loop", self._bgm_loop_cb.isChecked())
+        self._with_you_settings.setValue("bgm/index", self._bgm_index)
+
+    def _on_ambient_enabled_changed(self, _state: int) -> None:
+        self._save_ambient_state()
+        if self._ambient_enabled_cb.isChecked():
+            if self._phase == "running":
+                self._start_ambient()
+        else:
+            self._stop_ambient()
+
+    def _on_ambient_volume_changed(self, value: int) -> None:
+        self._ambient_audio.setVolume(value / 100.0)
+        self._with_you_settings.setValue("ambient/volume", value)
+
+    def _on_ambient_status_changed(self, status) -> None:
+        if status == QMediaPlayer.MediaStatus.LoadedMedia:
+            self._ambient_player.play()
+        elif status == QMediaPlayer.MediaStatus.EndOfMedia:
+            self._ambient_player.setPosition(0)
+            self._ambient_player.play()
+
+    def _build_noise_popup(self) -> None:
+        self._noise_popup = QDialog(self)
+        self._noise_popup.setObjectName("noisePopup")
+        self._noise_popup.setWindowTitle("背景噪声")
+        self._noise_popup.setModal(False)
+        self._noise_popup.setWindowFlags(
+            Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint
+        )
+        layout = QVBoxLayout(self._noise_popup)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
+        self._ambient_enabled_cb = QCheckBox("播放噪声（无限循环）", self._noise_popup)
+        self._ambient_enabled_cb.stateChanged.connect(self._on_ambient_enabled_changed)
+        layout.addWidget(self._ambient_enabled_cb)
+        vol_row = QHBoxLayout()
+        vol_row.addWidget(QLabel("音量", self._noise_popup))
+        self._ambient_volume_slider = QSlider(Qt.Orientation.Horizontal, self._noise_popup)
+        self._ambient_volume_slider.setRange(0, 100)
+        self._ambient_volume_slider.setValue(50)
+        self._ambient_volume_slider.valueChanged.connect(self._on_ambient_volume_changed)
+        vol_row.addWidget(self._ambient_volume_slider, 1)
+        layout.addLayout(vol_row)
+        self._noise_popup.setStyleSheet(self._build_focus_stylesheet(self._ui_scale()))
+
+    def _build_bgm_popup(self) -> None:
+        self._bgm_popup = QDialog(self)
+        self._bgm_popup.setObjectName("bgmPopup")
+        self._bgm_popup.setWindowTitle("背景音乐")
+        self._bgm_popup.setModal(False)
+        self._bgm_popup.setWindowFlags(
+            Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint
+        )
+        layout = QVBoxLayout(self._bgm_popup)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
+        self._bgm_enabled_cb = QCheckBox("播放 BGM", self._bgm_popup)
+        self._bgm_enabled_cb.stateChanged.connect(self._on_bgm_enabled_changed)
+        layout.addWidget(self._bgm_enabled_cb)
+        layout.addWidget(QLabel("BGM", self._bgm_popup))
+        vol_row = QHBoxLayout()
+        vol_row.addWidget(QLabel("音量", self._bgm_popup))
+        self._bgm_volume_slider = QSlider(Qt.Orientation.Horizontal, self._bgm_popup)
+        self._bgm_volume_slider.setRange(0, 100)
+        self._bgm_volume_slider.setValue(60)
+        self._bgm_volume_slider.valueChanged.connect(self._on_bgm_volume_changed)
+        vol_row.addWidget(self._bgm_volume_slider, 1)
+        layout.addLayout(vol_row)
+        self._bgm_loop_cb = QCheckBox("单曲循环", self._bgm_popup)
+        self._bgm_loop_cb.stateChanged.connect(self._on_bgm_loop_changed)
+        layout.addWidget(self._bgm_loop_cb)
+        self._bgm_list = QListWidget(self._bgm_popup)
+        self._bgm_list.setObjectName("chatTimeline")
+        self._bgm_list.setMaximumHeight(px(100, self._ui_scale()))
+        self._bgm_list.currentRowChanged.connect(self._on_bgm_list_selection_changed)
+        layout.addWidget(self._bgm_list)
+        self._bgm_seek_slider = QSlider(Qt.Orientation.Horizontal, self._bgm_popup)
+        self._bgm_seek_slider.setRange(0, 0)
+        self._bgm_seek_slider.sliderMoved.connect(self._on_bgm_seek_moved)
+        self._bgm_seek_slider.sliderPressed.connect(lambda: setattr(self, "_bgm_seek_block", True))
+        self._bgm_seek_slider.sliderReleased.connect(lambda: setattr(self, "_bgm_seek_block", False))
+        layout.addWidget(self._bgm_seek_slider)
+        self._bgm_time_label = QLabel("0:00 / 0:00", self._bgm_popup)
+        layout.addWidget(self._bgm_time_label)
+        ctrl_row = QHBoxLayout()
+        self._bgm_prev_btn = QPushButton("上一首", self._bgm_popup)
+        self._bgm_prev_btn.setObjectName("ghostBtn")
+        self._bgm_prev_btn.clicked.connect(self._bgm_prev_track)
+        self._bgm_next_btn = QPushButton("下一首", self._bgm_popup)
+        self._bgm_next_btn.setObjectName("ghostBtn")
+        self._bgm_next_btn.clicked.connect(self._bgm_next_track)
+        ctrl_row.addWidget(self._bgm_prev_btn)
+        ctrl_row.addWidget(self._bgm_next_btn)
+        ctrl_row.addStretch(1)
+        layout.addLayout(ctrl_row)
+        self._bgm_popup.setStyleSheet(self._build_focus_stylesheet(self._ui_scale()))
+
+    def _reposition_noise_popup(self) -> None:
+        btn_top_left = self._noise_btn.mapToGlobal(self._noise_btn.rect().topLeft())
+        x = max(0, btn_top_left.x())
+        y = btn_top_left.y() - self._noise_popup.height() - 4
+        self._noise_popup.move(x, max(0, y))
+
+    def _reposition_bgm_popup(self) -> None:
+        btn_top_right = self._bgm_btn.mapToGlobal(self._bgm_btn.rect().topRight())
+        x = btn_top_right.x() - self._bgm_popup.width()
+        y = btn_top_right.y() - self._bgm_popup.height() - 4
+        self._bgm_popup.move(x, max(0, y))
+
+    def _open_noise_popup(self) -> None:
+        if self._noise_popup.isVisible():
+            self._noise_popup.hide()
+            return
+        self._noise_popup.adjustSize()
+        self._reposition_noise_popup()
+        self._noise_popup.show()
+
+    def _open_bgm_popup(self) -> None:
+        if self._bgm_popup.isVisible():
+            self._bgm_popup.hide()
+            return
+        self._bgm_popup.adjustSize()
+        self._reposition_bgm_popup()
+        self._bgm_popup.show()
+
+    def _start_focus_audio(self) -> None:
+        """点击开始专注后自动播放：根据勾选状态启动背景噪声与 BGM。"""
+        if self._phase != "running":
+            return
+        if self._ambient_enabled_cb.isChecked():
+            self._start_ambient()
+        if self._bgm_enabled_cb.isChecked():
+            self._start_bgm()
+
+    def _start_ambient(self) -> None:
+        if not self._ambient_enabled_cb.isChecked() or self._noise_path is None:
+            return
+        self._ambient_audio.setVolume(self._ambient_volume_slider.value() / 100.0)
+        self._ambient_player.stop()
+        self._ambient_player.setSource(QUrl())
+        self._ambient_player.setSource(QUrl.fromLocalFile(str(self._noise_path.resolve())))
+        self._ambient_player.play()
+        QTimer.singleShot(400, self._ambient_player.play)
+
+    def _on_bgm_media_status_changed(self, status) -> None:
+        if status == QMediaPlayer.MediaStatus.LoadedMedia:
+            self._bgm_player.play()
+        elif status == QMediaPlayer.MediaStatus.EndOfMedia:
+            if self._bgm_loop_cb.isChecked():
+                self._bgm_player.setPosition(0)
+                self._bgm_player.play()
+            else:
+                next_idx = (self._bgm_index + 1) % len(self._bgm_playlist) if self._bgm_playlist else 0
+                if next_idx != self._bgm_index:
+                    self._bgm_index = next_idx
+                    self._bgm_list.setCurrentRow(self._bgm_index)
+                    self._bgm_play_index(self._bgm_index)
+                else:
+                    self._bgm_player.setPosition(0)
+                    self._bgm_player.play()
+
+    def _bgm_play_index(self, index: int) -> None:
+        if index < 0 or index >= len(self._bgm_playlist):
+            self._stop_bgm()
+            return
+        if not self._bgm_enabled_cb.isChecked():
+            self._stop_bgm()
+            return
+        path = self._bgm_playlist[index]
+        self._bgm_audio.setVolume(self._bgm_volume_slider.value() / 100.0)
+        self._bgm_player.stop()
+        self._bgm_player.setSource(QUrl())
+        self._bgm_player.setSource(QUrl.fromLocalFile(path))
+        self._bgm_player.play()
+        QTimer.singleShot(400, self._bgm_player.play)
+
+    def _stop_ambient(self) -> None:
+        self._ambient_player.stop()
+        self._ambient_player.setSource(QUrl())
+
+    def _on_bgm_volume_changed(self, value: int) -> None:
+        self._bgm_audio.setVolume(value / 100.0)
+        self._with_you_settings.setValue("bgm/volume", value)
+
+    def _on_bgm_enabled_changed(self, _state: int) -> None:
+        self._save_bgm_state()
+        if self._bgm_enabled_cb.isChecked():
+            if self._phase == "running":
+                self._start_bgm()
+        else:
+            self._stop_bgm()
+
+    def _on_bgm_loop_changed(self, _state: int) -> None:
+        self._save_bgm_state()
+
+    def _on_bgm_list_selection_changed(self, row: int) -> None:
+        if row < 0 or row >= len(self._bgm_playlist):
+            return
+        self._bgm_index = row
+        self._with_you_settings.setValue("bgm/index", row)
+        if self._phase == "running":
+            self._bgm_play_index(self._bgm_index)
+
+    def _on_bgm_seek_moved(self, position: int) -> None:
+        self._bgm_player.setPosition(position)
+
+    def _bgm_prev_track(self) -> None:
+        if not self._bgm_playlist:
+            return
+        self._bgm_index = (self._bgm_index - 1) % len(self._bgm_playlist)
+        self._bgm_list.setCurrentRow(self._bgm_index)
+        self._with_you_settings.setValue("bgm/index", self._bgm_index)
+        self._bgm_play_index(self._bgm_index)
+
+    def _bgm_next_track(self) -> None:
+        if not self._bgm_playlist:
+            return
+        self._bgm_index = (self._bgm_index + 1) % len(self._bgm_playlist)
+        self._bgm_list.setCurrentRow(self._bgm_index)
+        self._with_you_settings.setValue("bgm/index", self._bgm_index)
+        self._bgm_play_index(self._bgm_index)
+
+    def _on_bgm_position_changed(self, position: int) -> None:
+        if getattr(self, "_bgm_seek_block", False):
+            return
+        self._bgm_seek_slider.setMaximum(max(self._bgm_player.duration(), 1))
+        self._bgm_seek_slider.setValue(position)
+        d = self._bgm_player.duration()
+        self._bgm_time_label.setText(f"{position // 1000 // 60}:{position // 1000 % 60:02d} / {d // 1000 // 60}:{d // 1000 % 60:02d}" if d > 0 else "0:00 / 0:00")
+
+    def _on_bgm_duration_changed(self, duration: int) -> None:
+        self._bgm_seek_slider.setRange(0, max(0, duration))
+
+    def _start_bgm(self) -> None:
+        if not self._bgm_enabled_cb.isChecked() or not self._bgm_playlist:
+            return
+        self._bgm_index = min(self._bgm_index, len(self._bgm_playlist) - 1)
+        self._bgm_play_index(self._bgm_index)
+
+    def _stop_bgm(self) -> None:
+        self._bgm_player.stop()
+        self._bgm_player.setSource(QUrl())
+        self._bgm_seek_slider.setRange(0, 0)
+        self._bgm_time_label.setText("0:00 / 0:00")
+
+    @staticmethod
+    def _focus_theme_tokens() -> dict[str, str]:
+        return {
+            "bg_dialog": "#0f141b",
+            "text_light": "#e6edf3",
+            "panel_grad_a": "#161d27",
+            "panel_grad_b": "#131922",
+            "panel_border": "#283342",
+            "settings_bg": "#eef2f6",
+            "status_text": "#f1f5f9",
+            "round_text": "#c4d0df",
+            "tip_text": "#18222d",
+            "settings_text": "#16212c",
+            "unit_text": "#253342",
+            "divider": "#c6d0db",
+            "card_bg_a": "#ffffff",
+            "card_bg_b": "#f7f9fb",
+            "card_border": "#c8d3df",
+            "countdown": "#ff6b6b",
+            "input_bg": "#ffffff",
+            "input_border": "#b5c4d2",
+            "input_focus": "#ff9e8b",
+            "input_focus_bg": "#fffaf7",
+            "btn_pink_top": "#fff5f9",
+            "btn_pink_bottom": "#ffe7f1",
+            "btn_pink_border": "#e7bfd1",
+            "btn_pink_border_pressed": "#d8a8bf",
+            "btn_pink_hover_top": "#fff9fc",
+            "btn_pink_hover_bottom": "#ffedf5",
+            "text_dark": "#111111",
+            "font_family": '"思源黑体-Bold", "Source Han Sans SC", "PingFang SC"',
+            "mini_panel_a": "rgba(255, 248, 245, 238)",
+            "mini_panel_b": "rgba(248, 249, 250, 238)",
+            "mini_panel_border": "rgba(255, 190, 176, 215)",
+            "mini_text": "#4c5b67",
+            "mini_focus": "#2f9e67",
+            "mini_break": "#d89a18",
+            "mini_pause": "#6c7a89",
+            "mini_config": "#5f6f82",
+            "mini_hangup": "#d9534f",
+            "mini_timer": "#ff6b6b",
+            "mini_btn_a": "#ffffff",
+            "mini_btn_b": "#f8f9fa",
+            "mini_btn_border": "rgba(219, 224, 229, 220)",
+            "mini_btn_text": "#111111",
+            "mini_btn_hover": "rgba(255, 158, 139, 220)",
+            "mini_btn_pressed": "#eef1f4",
+            "mini_danger_a": "#fff0f5",
+            "mini_danger_b": "#ffe2ed",
+            "mini_danger_border": "#e5b0c7",
+            "mini_danger_text": "#111111",
+            "mini_danger_hover_a": "#fff4f8",
+            "mini_danger_hover_b": "#ffe8f0",
+            "mini_danger_pressed_a": "#ffe8f1",
+            "mini_danger_pressed_b": "#ffdbe8",
+            "focus_bg_cream": "rgba(255, 242, 238, 0.96)",
+            "macaron_pink": "#e8a0b0",
+            "popup_bg": "rgba(255, 242, 238, 0.92)",
+        }
+
+    def _build_focus_stylesheet(self, scale: float) -> str:
+        t = self._focus_theme_tokens()
+        return f"""
+            QDialog {{
+                background: {t["bg_dialog"]};
+                color: {t["text_light"]};
+            }}
+            QDialog[viewMode="focus"] {{
+                background: {t["focus_bg_cream"]};
+            }}
+            QDialog#noisePopup, QDialog#bgmPopup {{
+                background: {t["popup_bg"]};
+                border: 1px solid {t["card_border"]};
+                border-radius: 14px;
+                border-image: none;
+            }}
+            QDialog#noisePopup QLabel, QDialog#bgmPopup QLabel {{
+                color: {t["macaron_pink"]};
+            }}
+            QDialog#noisePopup QCheckBox, QDialog#bgmPopup QCheckBox {{
+                color: {t["macaron_pink"]};
+            }}
+            QDialog[viewMode="config"] {{
+                background: {t["settings_bg"]};
+                color: {t["settings_text"]};
+            }}
+            QLabel#statusLabel, QLabel#roundLabel, QLabel#countdownLabel, QPushButton {{
+                font-family: {t["font_family"]};
+            }}
+            QFrame#topBar, QFrame#bottomBar {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {t["panel_grad_a"]}, stop:1 {t["panel_grad_b"]});
+                border-bottom: 1px solid {t["panel_border"]};
+            }}
+            QDialog[viewMode="config"] QFrame#topBar, QDialog[viewMode="config"] QFrame#bottomBar {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ffffff, stop:1 #f4f7fa);
+                border-bottom: 1px solid {t["card_border"]};
+            }}
+            QFrame#settingsPanel {{ background: {t["settings_bg"]}; }}
+            QFrame#bottomBar {{
                 border-bottom: none;
-                border-top: 1px solid #ffd3e6;
-            }
-            QLabel#statusLabel {
-                font-size: %dpx;
-                font-weight: 700;
-                color: #221626;
-            }
-            QLabel#roundLabel {
-                font-size: %dpx;
-                font-weight: 700;
-                color: #8d365d;
-            }
-            QLabel#tipLabel {
-                font-size: %dpx;
-                color: #8d365d;
-            }
-            QCheckBox {
-                color: #c13c83;
-                font-size: %dpx;
-                font-weight: 700;
-            }
-            QLabel#settingFieldLabel {
-                font-size: %dpx;
-                color: #7f3154;
-            }
-            QLabel#roundsFieldLabel {
-                font-size: %dpx;
-                color: #7f3154;
-            }
-            QLabel#timeFieldLabel {
-                font-size: %dpx;
-                color: #7f3154;
-            }
-            QLabel#unitLabel {
-                font-size: %dpx;
-                color: #8d365d;
-            }
-            QFrame#settingCard {
-                background: #fff1f8;
-                border: 1px solid #ffc7e0;
-                border-radius: 12px;
-            }
-            QLabel#countdownLabel {
-                font-size: %dpx;
+                border-top: 1px solid {t["panel_border"]};
+            }}
+            QDialog[viewMode="config"] QFrame#bottomBar {{
+                border-top: 1px solid {t["card_border"]};
+            }}
+            QLabel#statusLabel {{ font-size: {px(17, scale)}px; font-weight: 700; color: {t["status_text"]}; }}
+            QLabel#roundLabel {{ font-size: {px(32, scale)}px; font-weight: 700; color: {t["round_text"]}; }}
+            QDialog[viewMode="config"] QLabel#statusLabel {{ color: {t["settings_text"]}; }}
+            QDialog[viewMode="config"] QLabel#roundLabel {{ color: {t["unit_text"]}; }}
+            QLabel#tipLabel {{ font-size: {px(13, scale)}px; color: {t["tip_text"]}; padding: 2px 4px; }}
+            QCheckBox {{ color: #b8c4d3; font-size: {px(26, scale)}px; font-weight: 700; }}
+            QLabel#settingFieldLabel, QLabel#roundsFieldLabel, QLabel#timeFieldLabel {{
+                font-size: {px(14, scale)}px; color: {t["settings_text"]};
+            }}
+            QLabel#unitLabel {{ font-size: {px(28, scale)}px; color: {t["unit_text"]}; }}
+            QFrame#settingsDivider {{ background: {t["divider"]}; border-radius: 1px; margin-bottom: 2px; }}
+            QFrame#settingCard {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {t["card_bg_a"]}, stop:1 {t["card_bg_b"]});
+                border: 1px solid {t["card_border"]};
+                border-radius: 14px;
+            }}
+            QLabel#countdownLabel {{
+                font-size: {px(56, scale)}px;
                 font-weight: 800;
-                color: #c13c83;
-            }
-            QFrame {
-                border: none;
-            }
-            QSpinBox {
-                background: #fff2f8;
-                border: 2px solid #ffb3d4;
+                color: {t["countdown"]};
+                letter-spacing: 1px;
+            }}
+            QFrame {{ border: none; }}
+            QSpinBox {{
+                background: {t["input_bg"]};
+                border: 1px solid {t["input_border"]};
                 border-radius: 10px;
                 padding: 4px 8px;
-                min-height: %dpx;
-                color: #2a1f2a;
-                font-size: %dpx;
-            }
-            QSpinBox#roundsFieldSpin {
-                font-size: %dpx;
-            }
-            QSpinBox#timeFieldSpin {
-                font-size: %dpx;
-            }
-            QPushButton#primaryBtn {
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #ff71af,
-                    stop:1 #ff9fcc
-                );
-                border: none;
-                border-radius: 22px;
-                color: #ffffff;
-                min-height: %dpx;
-                font-size: %dpx;
+                min-height: {px(34, scale)}px;
+                color: {t["text_dark"]};
+                font-size: {px(12, scale)}px;
+            }}
+            QSpinBox:focus {{
+                border: 2px solid {t["input_focus"]};
+                background: {t["input_focus_bg"]};
+            }}
+            QSpinBox#roundsFieldSpin, QSpinBox#timeFieldSpin {{
+                font-size: {px(24, scale)}px;
+            }}
+            QPushButton#primaryBtn, QPushButton#ghostBtn, QPushButton#chocoBtn, QPushButton#dangerBtn {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {t["btn_pink_top"]}, stop:1 {t["btn_pink_bottom"]});
+                border: 1px solid {t["btn_pink_border"]};
+                border-bottom: 2px solid {t["btn_pink_border_pressed"]};
+                color: {t["text_dark"]};
                 font-weight: 700;
-            }
-            QPushButton#ghostBtn {
+            }}
+            QPushButton#primaryBtn {{
+                border-radius: 12px;
+                min-height: {px(44, scale)}px;
+                font-size: {px(15, scale)}px;
+                padding: 6px 10px;
+            }}
+            QPushButton#ghostBtn {{
+                border-radius: 12px;
+                min-height: {px(36, scale)}px;
+                min-width: {px(66, scale)}px;
+                font-size: {px(13, scale)}px;
+                padding: 6px 10px;
+            }}
+            QPushButton#chocoBtn {{
+                border-radius: 10px;
+                min-height: {px(30, scale)}px;
+                min-width: 0px;
+                margin: 2px;
+                padding: 6px 8px;
+                font-size: {px(13, scale)}px;
+            }}
+            QPushButton#dangerBtn {{
+                border-radius: 12px;
+                min-height: {px(36, scale)}px;
+                min-width: {px(66, scale)}px;
+                font-size: {px(13, scale)}px;
+                padding: 6px 10px;
+            }}
+            QPushButton#primaryBtn:hover, QPushButton#ghostBtn:hover, QPushButton#chocoBtn:hover, QPushButton#dangerBtn:hover {{
+                border-color: #e2a7c2;
                 background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #fff0f8,
-                    stop:1 #ffe4f1
+                    x1:0, y1:0, x2:0, y2:1,
+                    stop:0 {t["btn_pink_hover_top"]},
+                    stop:1 {t["btn_pink_hover_bottom"]}
                 );
-                border: none;
-                border-radius: 18px;
-                color: #8d365d;
-                min-height: %dpx;
-                min-width: %dpx;
-                padding: 4px 12px;
-                font-size: %dpx;
-            }
-            QPushButton#dangerBtn {
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #ffd7ea,
-                    stop:1 #ffbfe0
-                );
-                border: none;
-                border-radius: 18px;
-                color: #b43477;
-                min-height: %dpx;
-                min-width: %dpx;
-                padding: 4px 12px;
-                font-size: %dpx;
-                font-weight: 700;
-            }
-            """
-            % (
-                px(17, scale),
-                px(32, scale),
-                px(13, scale),
-                px(26, scale),
-                px(14, scale),
-                px(28, scale),
-                px(28, scale),
-                px(13, scale),
-                px(56, scale),
-                px(34, scale),
-                px(12, scale),
-                px(24, scale),
-                px(24, scale),
-                px(44, scale),
-                px(15, scale),
-                px(36, scale),
-                px(66, scale),
-                px(13, scale),
-                px(36, scale),
-                px(66, scale),
-                px(13, scale),
-            )
-        )
+            }}
+            QPushButton#primaryBtn:pressed, QPushButton#ghostBtn:pressed, QPushButton#chocoBtn:pressed, QPushButton#dangerBtn:pressed {{
+                border-bottom: 1px solid {t["btn_pink_border_pressed"]};
+                padding-top: 7px;
+                padding-bottom: 5px;
+            }}
+        """
+
+    def _set_view_mode(self, mode: str) -> None:
+        self.setProperty("viewMode", mode)
+        style = self.style()
+        if style is not None:
+            style.unpolish(self)
+            style.polish(self)
+        self.update()
 
     def open_call(self) -> None:
         if self._mini_bar is not None and self._mini_bar.isVisible():
@@ -815,6 +1313,37 @@ class WithYouWindow(QDialog):
                 return p
         return None
 
+    @staticmethod
+    def _audio_extensions() -> tuple[str, ...]:
+        return (".mp3", ".m4a", ".wav", ".flac", ".ogg", ".MP3", ".M4A", ".WAV", ".FLAC", ".OGG")
+
+    def _scan_audio_dir(self, directory: Path) -> list[Path]:
+        if not directory.is_dir():
+            return []
+        exts = self._audio_extensions()
+        return sorted(
+            (p for p in directory.resolve().iterdir() if p.is_file() and p.suffix in exts),
+            key=lambda p: p.name.lower(),
+        )
+
+    def _first_audio_in_dir(self, directory: Path) -> Path | None:
+        files = self._scan_audio_dir(directory)
+        return files[0] if files else None
+
+    def _refresh_bgm_playlist(self) -> None:
+        """从 resources/Call/bgm 扫描音频，只显示歌名。"""
+        self._bgm_playlist = [str(p.resolve()) for p in self._scan_audio_dir(self._bgm_dir)]
+        if not hasattr(self, "_bgm_list") or self._bgm_list is None:
+            return
+        self._bgm_list.clear()
+        for path in self._bgm_playlist:
+            self._bgm_list.addItem(QListWidgetItem(Path(path).name))
+        self._bgm_index = max(0, min(self._bgm_index, len(self._bgm_playlist) - 1))
+        if self._bgm_playlist:
+            self._bgm_list.blockSignals(True)
+            self._bgm_list.setCurrentRow(self._bgm_index)
+            self._bgm_list.blockSignals(False)
+
     def _pick_media_candidates(self, names: tuple[str, ...]) -> list[Path]:
         candidates: list[Path] = []
         for name in names:
@@ -822,6 +1351,13 @@ class WithYouWindow(QDialog):
             if p.exists():
                 candidates.append(p)
         return candidates
+
+    def _apply_soft_shadow(self, widget: QWidget, blur_radius: int, y_offset: int, *, alpha: int = 36) -> None:
+        effect = QGraphicsDropShadowEffect(widget)
+        effect.setBlurRadius(max(8, int(blur_radius)))
+        effect.setOffset(0, int(y_offset))
+        effect.setColor(QColor(23, 36, 51, max(0, min(255, alpha))))
+        widget.setGraphicsEffect(effect)
 
     def _play_media(self, media_path: Path, *, loop: bool) -> None:
         resolved = str(media_path.resolve())
@@ -845,6 +1381,8 @@ class WithYouWindow(QDialog):
         self._player.setSource(QUrl())
         self._current_media_source = ""
         self._sfx_player.stop()
+        self._stop_ambient()
+        self._stop_bgm()
 
     def _play_start_sfx(self) -> None:
         if self._start_sfx_path is None:
@@ -892,8 +1430,9 @@ class WithYouWindow(QDialog):
 
     def _enter_config(self, *, preserve_progress: bool = False) -> None:
         self._phase = "config"
+        self._set_view_mode("config")
         self._set_interactive_mode()
-        self._middle_stack.setCurrentWidget(self._settings_panel)
+        self._middle_stack.setCurrentWidget(self._settings_scroll)
         self._active_video_label = None
         self._break_intro_playing = False
         self._start_intro_playing = False
@@ -947,6 +1486,7 @@ class WithYouWindow(QDialog):
     def _start_focus(self) -> None:
         self._resume_state = None
         self._phase = "running"
+        self._set_view_mode("focus")
         self._set_interactive_mode()
         self._middle_stack.setCurrentWidget(self._withyou_panel)
         self._active_video_label = self._withyou_video
@@ -982,7 +1522,11 @@ class WithYouWindow(QDialog):
         self._sync_countdown_ui()
         self._tick.start()
         self._update_mini_bar_state()
+        self._refresh_bgm_playlist()
         self._play_focus_entry_media()
+        # 点击开始专注后自动播放：界面切换完成后再启动背景噪声与 BGM，避免设备未就绪
+        QTimer.singleShot(150, self._start_focus_audio)
+
         if self._withyou_path is None and not self._start_intro_playing:
             QMessageBox.information(self, "缺少素材", "未找到 withyou 视频素材，将仅保留计时。")
 
@@ -999,6 +1543,7 @@ class WithYouWindow(QDialog):
         self._resume_state = None
 
         self._phase = "running"
+        self._set_view_mode("focus")
         self._set_interactive_mode()
         self._middle_stack.setCurrentWidget(self._withyou_panel)
         self._active_video_label = self._withyou_video
@@ -1025,9 +1570,11 @@ class WithYouWindow(QDialog):
         else:
             self.status_label.setText("休息中" if self._is_break_phase else "专注中")
             self._tick.start()
-            if not self._is_break_phase:
-                self._play_focus_entry_media()
-            elif self._withyou_path is not None:
+            # Resuming from "返回" should keep current stage directly,
+            # without replaying start intro clips.
+            self._start_intro_playing = False
+            self._break_intro_playing = False
+            if self._withyou_path is not None:
                 self._play_media(self._withyou_path, loop=True)
         self._sync_round_ui()
         self._sync_countdown_ui()
@@ -1035,8 +1582,18 @@ class WithYouWindow(QDialog):
         self._update_mini_bar_state()
 
     def _start_hangup(self) -> None:
+        if self._phase == "config":
+            # In settings view, exit should return to chat immediately
+            # without playing hangup media.
+            self._tick.stop()
+            self._set_status_tray_visible(False)
+            self.close()
+            return
         self._tick.stop()
+        self._stop_ambient()
+        self._stop_bgm()
         self._phase = "hangup"
+        self._set_view_mode("focus")
         self._update_mini_bar_state()
         if self._hangup_path is None:
             self.close()
@@ -1063,7 +1620,10 @@ class WithYouWindow(QDialog):
         if self._withyou_width <= 0 or self._withyou_height <= 0:
             return
         target_h = int(round(self.width() * (self._withyou_height / self._withyou_width)))
-        max_h = max(120, self.height() - 180)
+        top_h = max(64, self._top_bar.sizeHint().height())
+        bottom_h = max(64, self._bottom_bar.sizeHint().height())
+        available = self.height() - top_h - bottom_h
+        max_h = max(120, available)
         self._middle_stack.setFixedHeight(min(target_h, max_h))
 
     def _on_tick(self) -> None:
@@ -1254,7 +1814,7 @@ class WithYouWindow(QDialog):
 
     def _ensure_mini_bar(self) -> MiniCallBar:
         if self._mini_bar is None:
-            self._mini_bar = MiniCallBar(parent=None)
+            self._mini_bar = MiniCallBar(parent=None, theme_tokens=self._focus_theme_tokens())
             self._mini_bar.expandRequested.connect(self._exit_mini_mode)
             self._mini_bar.chatRequested.connect(self._request_chat_window)
             self._mini_bar.hangupRequested.connect(self._start_hangup)
@@ -1420,23 +1980,24 @@ class WithYouWindow(QDialog):
             return
         if self._phase == "running":
             if self._is_paused:
-                self._mini_bar.set_status("已暂停")
+                self._mini_bar.set_status("● 已暂停")
             elif self._is_break_phase:
-                self._mini_bar.set_status("休息中")
+                self._mini_bar.set_status("● 休息中")
             else:
-                self._mini_bar.set_status("专注中")
+                self._mini_bar.set_status("● 专注中")
         elif self._phase == "config":
-            self._mini_bar.set_status("设置中")
+            self._mini_bar.set_status("● 设置中")
         elif self._phase == "hangup":
-            self._mini_bar.set_status("结束中")
+            self._mini_bar.set_status("● 结束中")
         else:
-            self._mini_bar.set_status("通话中")
+            self._mini_bar.set_status("● 通话中")
         self._update_status_tray_state()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._sync_middle_height()
         self._render_frame()
+        self._reposition_audio_popups_if_shown()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Escape:
@@ -1447,6 +2008,16 @@ class WithYouWindow(QDialog):
             event.accept()
             return
         super().keyPressEvent(event)
+
+    def moveEvent(self, event) -> None:
+        super().moveEvent(event)
+        self._reposition_audio_popups_if_shown()
+
+    def _reposition_audio_popups_if_shown(self) -> None:
+        if self._noise_popup.isVisible():
+            self._reposition_noise_popup()
+        if self._bgm_popup.isVisible():
+            self._reposition_bgm_popup()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         was_call_active = self._call_active
@@ -1459,6 +2030,10 @@ class WithYouWindow(QDialog):
             self._status_tray.hide()
         if self._note_window is not None and self._note_window.isVisible():
             self._note_window.close()
+        if self._noise_popup.isVisible():
+            self._noise_popup.close()
+        if self._bgm_popup.isVisible():
+            self._bgm_popup.close()
         if was_call_active:
             self.callEnded.emit()
         super().closeEvent(event)
