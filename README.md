@@ -5,8 +5,13 @@
 ## 用户安装 
 
 1. 在右侧 `Releases` 下载最新 `.dmg`。  
-2. 打开并安装应用。  
-3. 首次运行时，请按提示开启 macOS 相关权限（如录屏、终端控制等）。
+2. 进行以下操作（作者没钱开Apple Developer ID）：  
+	a.终端中运行
+  ```bash
+  xattr -dr com.apple.quarantine "/Applications/Fleet Snowfluff.app"
+  ```
+  b.双击打开安装包 
+4. 首次运行时，请按提示开启 macOS 相关权限（如录屏、终端控制等）。
 
 ### DeepSeek API Key 🔑
 
