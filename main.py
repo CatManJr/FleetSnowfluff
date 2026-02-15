@@ -47,10 +47,12 @@ def _resolve_resources_dir() -> Path:
 
 def _pick_app_font(resources_dir: Path) -> QFont:
     """
-    Prefer user-imported fonts in resources/fonts, then system fallbacks.
+    Prefer user-imported fonts in resources/font or resources/fonts, then system fallbacks.
     """
-    fonts_dir = resources_dir / "fonts"
-    if fonts_dir.exists():
+    font_dirs = (resources_dir / "font", resources_dir / "fonts")
+    for fonts_dir in font_dirs:
+        if not fonts_dir.exists():
+            continue
         for ext in ("*.otf", "*.ttf", "*.ttc"):
             for font_path in sorted(fonts_dir.glob(ext)):
                 font_id = QFontDatabase.addApplicationFont(str(font_path))
