@@ -134,6 +134,7 @@ class ChatWindow(QDialog):
         config_dir: Path,
         api_key_getter,
         reasoning_enabled_getter=None,
+        context_turns_getter=None,
         icon_path: Path | None = None,
         persona_prompt: str = "",
         parent=None,
@@ -143,6 +144,7 @@ class ChatWindow(QDialog):
         self._history_path = config_dir / "chat_history.jsonl"
         self._api_key_getter = api_key_getter
         self._reasoning_enabled_getter = reasoning_enabled_getter or (lambda: False)
+        self._context_turns_getter = context_turns_getter or (lambda: 20)
         self._icon_path = icon_path
         self._resources_dir = icon_path.parent if icon_path is not None else config_dir.parent
         self._send_icon_path = None
@@ -159,6 +161,7 @@ class ChatWindow(QDialog):
         self._thread: QThread | None = None
         self._worker: ChatWorker | None = None
         self._pending_index: int | None = None
+        self._pending_record_index: int | None = None
         self._pending_timestamp: str = ""
         self._pending_prompt: str = ""
         self._with_you_window: WithYouWindow | None = None
@@ -515,6 +518,28 @@ class ChatWindow(QDialog):
         except OSError:
             pass
 
+    def _append_pending_history(self, user_text: str) -> int:
+        self._records.append({"timestamp": self._pending_timestamp, "user": user_text, "assistant": ""})
+        self._rewrite_history_file()
+        return len(self._records) - 1
+
+    def _finalize_pending_history(self, assistant_text: str) -> None:
+        if self._pending_record_index is None:
+            return
+        if 0 <= self._pending_record_index < len(self._records):
+            self._records[self._pending_record_index]["assistant"] = assistant_text
+            self._rewrite_history_file()
+        self._pending_record_index = None
+
+    def _rewrite_history_file(self) -> None:
+        try:
+            self._config_dir.mkdir(parents=True, exist_ok=True)
+            with self._history_path.open("w", encoding="utf-8") as f:
+                for item in self._records:
+                    f.write(json.dumps(item, ensure_ascii=False) + "\n")
+        except OSError:
+            QMessageBox.warning(self, "保存失败", "无法更新历史文件，请检查文件权限。")
+
     def _render_records(self) -> None:
         self.chat_list.clear()
         for item in self._records:
@@ -533,10 +558,12 @@ class ChatWindow(QDialog):
         self._pending_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self._pending_prompt = prompt
         self._add_chat_bubble("user", prompt, self._pending_timestamp)
+        self._pending_record_index = self._append_pending_history(prompt)
 
         api_key = (self._api_key_getter() or "").strip()
         if not api_key:
             QMessageBox.information(self, "缺少 API Key", "请先在右键设置里填写 DeepSeek API Key。")
+            self._finalize_pending_history("[未发送] 缺少 API Key")
             self.send_button.setDisabled(False)
             self.input_box.setReadOnly(False)
             return
@@ -567,7 +594,7 @@ class ChatWindow(QDialog):
         if self._pending_index is not None and 0 <= self._pending_index < self.chat_list.count():
             self.chat_list.takeItem(self._pending_index)
             self._add_chat_bubble("assistant", answer, self._pending_timestamp)
-        self._append_history(self._pending_prompt, answer)
+        self._finalize_pending_history(answer)
         self._pending_index = None
         self._pending_prompt = ""
         self.send_button.setDisabled(False)
@@ -577,6 +604,7 @@ class ChatWindow(QDialog):
         if self._pending_index is not None and 0 <= self._pending_index < self.chat_list.count():
             self.chat_list.takeItem(self._pending_index)
             self._add_chat_bubble("assistant", f"[失败] {error_text}", self._pending_timestamp)
+        self._finalize_pending_history(f"[失败] {error_text}")
         self._pending_index = None
         self.send_button.setDisabled(False)
         self.input_box.setReadOnly(False)
@@ -612,7 +640,12 @@ class ChatWindow(QDialog):
         else:
             messages.append({"role": "system", "content": default_system})
 
-        for item in self._records[-20:]:
+        try:
+            context_turns = max(0, int(self._context_turns_getter()))
+        except Exception:
+            context_turns = 20
+        history_slice = self._records[-context_turns:] if context_turns > 0 else []
+        for item in history_slice:
             messages.append({"role": "user", "content": item["user"]})
             messages.append({"role": "assistant", "content": item["assistant"]})
         messages.append({"role": "user", "content": prompt})
@@ -657,14 +690,202 @@ class ChatWindow(QDialog):
         viewer.setWindowTitle("聊天记录")
         viewer.resize(390, 700)
         root = QVBoxLayout(viewer)
+        viewer.setStyleSheet(
+            """
+            QDialog {
+                background: #fff7fb;
+                color: #2a1f2a;
+            }
+            QListWidget {
+                background: #fffdfd;
+                border: 1px solid #ffd3e6;
+                border-radius: 12px;
+                padding: 6px;
+                color: #2a1f2a;
+                font-size: 13px;
+            }
+            QListWidget::item {
+                border-radius: 10px;
+                padding: 8px;
+                margin: 4px 0;
+            }
+            QListWidget::item:selected {
+                background: #ffe4f1;
+                color: #6f2d4f;
+            }
+            QPushButton#historyActionBtn {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #fff0f8,
+                    stop:1 #ffe4f1
+                );
+                border: 1px solid #ffb7d6;
+                border-radius: 12px;
+                color: #8d365d;
+                min-height: 34px;
+                padding: 4px 12px;
+                font-size: 13px;
+            }
+            QPushButton#historyActionBtn:hover {
+                border-color: #ff8fc1;
+                background: #ffe7f3;
+            }
+            QPushButton#historyDangerBtn {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #ffd7ea,
+                    stop:1 #ffbfe0
+                );
+                border: 1px solid #ff8fc1;
+                border-radius: 12px;
+                color: #b43477;
+                min-height: 34px;
+                padding: 4px 12px;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            QPushButton#historyDangerBtn:hover {
+                border-color: #ff6eb0;
+                background: #ffd3e7;
+            }
+            """
+        )
         panel = QListWidget(viewer)
-        panel.setSelectionMode(QListWidget.SelectionMode.NoSelection)
-        for item in self._records:
+        panel.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+
+        def _preview_text(item: dict[str, str]) -> str:
             ts = item.get("timestamp", "")
-            panel.addItem(QListWidgetItem(f"[{ts}] 你：{item['user']}"))
-            panel.addItem(QListWidgetItem(f"[{ts}] 飞行雪绒：{item['assistant']}"))
-            panel.addItem(QListWidgetItem("-" * 34))
+            preview_user = item["user"].strip().replace("\n", " ")
+            preview_assistant = item["assistant"].strip().replace("\n", " ")
+            if len(preview_user) > 28:
+                preview_user = preview_user[:28] + "..."
+            if len(preview_assistant) > 28:
+                preview_assistant = preview_assistant[:28] + "..."
+            return f"[{ts}] 你：{preview_user}\n飞行雪绒：{preview_assistant}"
+
+        def _reload_panel() -> None:
+            panel.clear()
+            for history_item in self._records:
+                panel.addItem(QListWidgetItem(_preview_text(history_item)))
+
+        _reload_panel()
         root.addWidget(panel)
+
+        actions = QHBoxLayout()
+        edit_btn = QPushButton("编辑回复", viewer)
+        edit_btn.setObjectName("historyActionBtn")
+        delete_btn = QPushButton("删除选中", viewer)
+        delete_btn.setObjectName("historyDangerBtn")
+        close_btn = QPushButton("返回", viewer)
+        close_btn.setObjectName("historyActionBtn")
+        actions.addWidget(edit_btn)
+        actions.addWidget(delete_btn)
+        actions.addStretch(1)
+        actions.addWidget(close_btn)
+        root.addLayout(actions)
+
+        def _edit_selected_reply() -> None:
+            row = panel.currentRow()
+            if row < 0 or row >= len(self._records):
+                return
+
+            target = self._records[row]
+            editor = QDialog(viewer)
+            editor.setWindowTitle("编辑爱弥斯回复")
+            editor.resize(380, 280)
+            editor_root = QVBoxLayout(editor)
+            editor.setStyleSheet(
+                """
+                QDialog {
+                    background: #fff7fb;
+                    color: #2a1f2a;
+                }
+                QLabel {
+                    color: #7f3154;
+                    font-size: 13px;
+                }
+                QPlainTextEdit {
+                    background: #fffdfd;
+                    border: 1px solid #ffd3e6;
+                    border-radius: 12px;
+                    padding: 8px;
+                    color: #2a1f2a;
+                    font-size: 14px;
+                }
+                QPushButton#editorActionBtn {
+                    background: qlineargradient(
+                        x1:0, y1:0, x2:1, y2:1,
+                        stop:0 #fff0f8,
+                        stop:1 #ffe4f1
+                    );
+                    border: 1px solid #ffb7d6;
+                    border-radius: 12px;
+                    color: #8d365d;
+                    min-height: 34px;
+                    padding: 4px 12px;
+                    font-size: 13px;
+                }
+                QPushButton#editorActionBtn:hover {
+                    border-color: #ff8fc1;
+                    background: #ffe7f3;
+                }
+                """
+            )
+
+            user_preview = target["user"].strip().replace("\n", " ")
+            if len(user_preview) > 42:
+                user_preview = user_preview[:42] + "..."
+            editor_root.addWidget(QLabel(f"用户输入：{user_preview}", editor))
+
+            reply_box = QPlainTextEdit(editor)
+            reply_box.setPlainText(target["assistant"])
+            editor_root.addWidget(reply_box, 1)
+
+            editor_actions = QHBoxLayout()
+            save_btn = QPushButton("保存", editor)
+            cancel_btn = QPushButton("取消", editor)
+            save_btn.setObjectName("editorActionBtn")
+            cancel_btn.setObjectName("editorActionBtn")
+            editor_actions.addStretch(1)
+            editor_actions.addWidget(save_btn)
+            editor_actions.addWidget(cancel_btn)
+            editor_root.addLayout(editor_actions)
+
+            def _save_reply() -> None:
+                target["assistant"] = reply_box.toPlainText().strip()
+                self._rewrite_history_file()
+                self._render_records()
+                _reload_panel()
+                panel.setCurrentRow(row)
+                editor.accept()
+
+            save_btn.clicked.connect(_save_reply)
+            cancel_btn.clicked.connect(editor.reject)
+            editor.exec()
+
+        def _delete_selected() -> None:
+            row = panel.currentRow()
+            if row < 0 or row >= len(self._records):
+                return
+            confirm = QMessageBox.question(
+                viewer,
+                "删除记录",
+                "确定删除选中的这条对话记录吗？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if confirm != QMessageBox.StandardButton.Yes:
+                return
+            del self._records[row]
+            self._rewrite_history_file()
+            self._render_records()
+            _reload_panel()
+            if panel.count() > 0:
+                panel.setCurrentRow(min(row, panel.count() - 1))
+
+        edit_btn.clicked.connect(_edit_selected_reply)
+        delete_btn.clicked.connect(_delete_selected)
+        close_btn.clicked.connect(viewer.accept)
         viewer.exec()
 
     def _clear_history(self) -> None:

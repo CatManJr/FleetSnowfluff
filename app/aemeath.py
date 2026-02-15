@@ -34,6 +34,7 @@ class Aemeath(QLabel):
         self._config_path = self._resolve_config_path()
         self._api_key = ""
         self._reasoning_enabled = False
+        self._chat_context_turns = 20
         self.idle_ids = [1, 2, 3, 4, 5, 6, 7]
         self.hover_id = 4
         self.seal_id = 8
@@ -244,6 +245,10 @@ class Aemeath(QLabel):
             self._flight_base_speed_px = max(1, int(data.get("flight_speed_px", self._flight_base_speed_px)))
         except (TypeError, ValueError):
             pass
+        try:
+            self._chat_context_turns = max(0, int(data.get("chat_context_turns", self._chat_context_turns)))
+        except (TypeError, ValueError):
+            pass
 
     def _save_config(self) -> bool:
         payload = {
@@ -251,6 +256,7 @@ class Aemeath(QLabel):
             "reasoning_enabled": self._reasoning_enabled,
             "min_jump_distance_px": self._min_jump_distance_px,
             "flight_speed_px": self._flight_base_speed_px,
+            "chat_context_turns": self._chat_context_turns,
         }
         try:
             self._config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -310,6 +316,7 @@ class Aemeath(QLabel):
             min_jump_distance=self._min_jump_distance_px,
             flight_speed=self._flight_base_speed_px,
             reasoning_enabled=self._reasoning_enabled,
+            chat_context_turns=self._chat_context_turns,
             parent=None,
         )
         if dialog.exec() != SettingsDialog.DialogCode.Accepted:
@@ -318,6 +325,7 @@ class Aemeath(QLabel):
         self._reasoning_enabled = dialog.reasoning_enabled()
         self._min_jump_distance_px = dialog.min_jump_distance()
         self._flight_base_speed_px = dialog.flight_speed()
+        self._chat_context_turns = dialog.chat_context_turns()
         if self._save_config():
             QMessageBox.information(self, "保存成功", "设置已保存，后续将自动读取。")
             return
@@ -598,9 +606,14 @@ class Aemeath(QLabel):
 
     def _load_music_volume_percent(self) -> int:
         raw = self._runtime_settings.value("audio/music_volume_percent", 70)
-        try:
+        if isinstance(raw, bool):
             volume = int(raw)
-        except (TypeError, ValueError):
+        elif isinstance(raw, (int, float, str)):
+            try:
+                volume = int(raw)
+            except (TypeError, ValueError):
+                volume = 70
+        else:
             volume = 70
         return max(0, min(100, volume))
 
@@ -854,13 +867,17 @@ class Aemeath(QLabel):
                 config_dir=self._config_path.parent,
                 api_key_getter=lambda: self._api_key,
                 reasoning_enabled_getter=lambda: self._reasoning_enabled,
+                context_turns_getter=lambda: self._chat_context_turns,
                 icon_path=self.resources_dir / "icon.webp",
                 persona_prompt=self._persona_prompt,
                 parent=None,
             )
-        self._chat_window.show()
-        self._chat_window.raise_()
-        self._chat_window.activateWindow()
+        chat_window = self._chat_window
+        if chat_window is None:
+            return
+        chat_window.show()
+        chat_window.raise_()
+        chat_window.activateWindow()
 
     def _on_chat_window_destroyed(self) -> None:
         self._chat_window = None
@@ -911,7 +928,10 @@ class Aemeath(QLabel):
         self._hide_windows_for_transform()
         self._pause_music_for_transform()
         self.hide()
-        self._transform_window.play_media(
+        transform_window = self._transform_window
+        if transform_window is None:
+            return
+        transform_window.play_media(
             video_path,
             target_geometry,
             desktop_scene_mode=use_desktop_scene_mode,
@@ -947,12 +967,14 @@ class Aemeath(QLabel):
             "chat_visible": False,
             "music_state": None,
         }
-        if self._is_widget_alive(self._chat_window) and self._chat_window.isVisible():
+        chat_window = self._chat_window
+        if self._is_widget_alive(chat_window) and chat_window is not None and chat_window.isVisible():
             state["chat_visible"] = True
-            self._chat_window.hide()
-        if self._is_widget_alive(self._music_window):
-            state["music_state"] = self._music_window.capture_visibility_state()
-            self._music_window.hide_for_transform()
+            chat_window.hide()
+        music_window = self._music_window
+        if self._is_widget_alive(music_window) and music_window is not None:
+            state["music_state"] = music_window.capture_visibility_state()
+            music_window.hide_for_transform()
         self._hidden_windows_before_transform = state
 
     def _restore_windows_after_transform(self) -> None:
@@ -960,20 +982,23 @@ class Aemeath(QLabel):
             return
         state = self._hidden_windows_before_transform
         self._hidden_windows_before_transform = {}
-        if bool(state.get("chat_visible", False)) and self._is_widget_alive(self._chat_window):
-            self._chat_window.show()
-            self._chat_window.raise_()
-            self._chat_window.activateWindow()
+        chat_window = self._chat_window
+        if bool(state.get("chat_visible", False)) and self._is_widget_alive(chat_window) and chat_window is not None:
+            chat_window.show()
+            chat_window.raise_()
+            chat_window.activateWindow()
         music_state = state.get("music_state")
-        if isinstance(music_state, dict) and self._is_widget_alive(self._music_window):
-            self._music_window.restore_after_transform(music_state)
+        music_window = self._music_window
+        if isinstance(music_state, dict) and self._is_widget_alive(music_window) and music_window is not None:
+            music_window.restore_after_transform(music_state)
 
     def _pause_music_for_transform(self) -> None:
         self._resume_music_after_transform = self._is_music_playing()
         if self._resume_music_after_transform:
             self._player.pause()
-            if self._is_widget_alive(self._music_window):
-                self._music_window.refresh_now_playing()
+            music_window = self._music_window
+            if self._is_widget_alive(music_window) and music_window is not None:
+                music_window.refresh_now_playing()
 
     def _resume_music_after_transform_if_needed(self) -> None:
         if not self._resume_music_after_transform:
@@ -981,8 +1006,9 @@ class Aemeath(QLabel):
         self._resume_music_after_transform = False
         if not self._player.source().isEmpty():
             self._player.play()
-            if self._is_widget_alive(self._music_window):
-                self._music_window.refresh_now_playing()
+            music_window = self._music_window
+            if self._is_widget_alive(music_window) and music_window is not None:
+                music_window.refresh_now_playing()
 
     def _launch_hacker_terminal(self) -> None:
         if sys.platform == "darwin":
@@ -1085,9 +1111,10 @@ class Aemeath(QLabel):
         track = self._playlist_order[self._playlist_index]
         self._player.setSource(QUrl.fromLocalFile(str(track)))
         self._player.play()
-        if self._is_widget_alive(self._music_window):
-            self._music_window.refresh_now_playing()
-            QTimer.singleShot(120, self._music_window.refresh_now_playing)
+        music_window = self._music_window
+        if self._is_widget_alive(music_window) and music_window is not None:
+            music_window.refresh_now_playing()
+            QTimer.singleShot(120, music_window.refresh_now_playing)
 
     def _play_next_track(self) -> None:
         if not self._playlist_order:
@@ -1153,8 +1180,9 @@ class Aemeath(QLabel):
     def _on_media_status_changed(self, status) -> None:
         if status == QMediaPlayer.MediaStatus.EndOfMedia:
             self._play_next_track()
-            if self._is_widget_alive(self._music_window):
-                self._music_window.refresh_now_playing()
+            music_window = self._music_window
+            if self._is_widget_alive(music_window) and music_window is not None:
+                music_window.refresh_now_playing()
 
     def _current_track(self) -> Path | None:
         if not self._playlist_order or self._playlist_index < 0:
@@ -1189,8 +1217,9 @@ class Aemeath(QLabel):
             except OSError:
                 continue
         QMessageBox.information(self, "导入完成", f"已导入 {imported} 首音乐。")
-        if self._is_widget_alive(self._music_window):
-            self._music_window.refresh_tracks()
+        music_window = self._music_window
+        if self._is_widget_alive(music_window) and music_window is not None:
+            music_window.refresh_tracks()
 
     def _remove_music_track(self, track_path: Path) -> bool:
         track = Path(track_path)
@@ -1253,11 +1282,14 @@ class Aemeath(QLabel):
                 parent=None,
             )
             self._music_window.readyForPlayback.connect(self._on_music_window_ready_for_playback)
-        self._music_window.refresh_tracks()
-        self._music_window.show()
-        self._music_window.raise_()
-        self._music_window.activateWindow()
-        if self._pending_autoplay_music and self._music_window.is_ready_for_playback():
+        music_window = self._music_window
+        if music_window is None:
+            return
+        music_window.refresh_tracks()
+        music_window.show()
+        music_window.raise_()
+        music_window.activateWindow()
+        if self._pending_autoplay_music and music_window.is_ready_for_playback():
             # Window is already ready (e.g., reopened). Defer to next tick
             # to keep "load first, then play" behavior consistent.
             QTimer.singleShot(0, self._on_music_window_ready_for_playback)
@@ -1271,14 +1303,17 @@ class Aemeath(QLabel):
         self._stop_flight()
         if self.idle_switch_timer.isActive():
             self.idle_switch_timer.stop()
-        if self._is_widget_alive(self._transform_window):
-            self._transform_window.close()
+        transform_window = self._transform_window
+        if self._is_widget_alive(transform_window) and transform_window is not None:
+            transform_window.close()
         self._transform_window = None
-        if self._is_widget_alive(self._chat_window):
-            self._chat_window.close()
+        chat_window = self._chat_window
+        if self._is_widget_alive(chat_window) and chat_window is not None:
+            chat_window.close()
         self._chat_window = None
-        if self._is_widget_alive(self._music_window):
-            self._music_window.close()
+        music_window = self._music_window
+        if self._is_widget_alive(music_window) and music_window is not None:
+            music_window.close()
         self._music_window = None
         self._clear_seals()
         self.close()
@@ -1295,8 +1330,9 @@ class Aemeath(QLabel):
 
     def eventFilter(self, watched, event) -> bool:
         if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
-            if self._is_widget_alive(self._transform_window) and self._transform_window.isVisible():
-                self._transform_window.close()
+            transform_window = self._transform_window
+            if self._is_widget_alive(transform_window) and transform_window is not None and transform_window.isVisible():
+                transform_window.close()
                 event.accept()
                 return True
         return super().eventFilter(watched, event)
