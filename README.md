@@ -176,22 +176,12 @@ uv cache clean pyside6 pyside6-addons pyside6-essentials shiboken6 && rm -rf ".v
   - 调整DeepSeek 能读取的对话长度
 
 ## 功能演示 🎥
-
-<details>
-<summary>点击展开视频（如果您的平台支持）</summary>
-
-[![Demo Video 封面](https://img.shields.io/badge/点击此处播放演示视频-blue?logo=playstation)](https://github.com/CatManJr/FleetSnowfluff/blob/main/demo/demov0.1.4.mp4)
-
-如果页面无法直接播放，可手动复制链接后用本地播放器打开：  
-https://github.com/CatManJr/FleetSnowfluff/blob/main/demo/demov0.1.4.mp4
-</details>
+录制中，将上传视频平台
 
 ## 开发日志
-- 2-11-2026（UTC-5）：测试版锐意完善中。
-可能提供 English Version（虽然我也不知道有什么意义）
-Windows 版待开发，或请您安装开发者版本后自行封包 
+- 2-11-2026（UTC-5）：测试版锐意完善中。可能提供 English Version（虽然我也不知道有什么意义）。Windows 版待开发，或请您安装开发者版本后自行封包 
 - 2-12-2026（UTC-5）：优化飞行雪绒电台UI及交互设计，v0.1.5beta release   
 - 2-12-2026（UTC-5）：播片堆料完成。可切换DeepSeek通用对话/推理模式。优化飞行雪绒电台功能和交互设计。v1.0.2正式版发布。  
 - 2-13-2026（UTC-5）：v1.1.0尝试加入番茄钟+备忘录。Windows版测试中。  
 - 2-14-2026（UTC-5）：更新番茄钟功能。优化跨平台、不同分辨率下的字体和窗口尺寸显示问题。 更新Windows-toolkit（打包工具）。
-- 2-15-2026（UTC-5）：MacOS 1.1.1 版本，增加刘海屏旁状态栏菜单，支持隐藏/显示飞行雪绒（跳动的GUI）
+- 2-15-2026（UTC-5）：MacOS 1.1.1 版本，增加刘海屏旁状态栏菜单，支持隐藏/显示飞行雪绒（跳动的GUI）。番茄钟 UI 待优化。
