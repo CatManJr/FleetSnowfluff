@@ -196,3 +196,4 @@ uv cache clean pyside6 pyside6-addons pyside6-essentials shiboken6 && rm -rf ".v
 - 2-15-2026（UTC-5）：MacOS 1.1.1 版本，增加刘海屏旁状态栏菜单，支持隐藏/显示飞行雪绒（跳动的GUI）。番茄钟 UI 待优化。
 - 2-15-2026（UTC-5）：MacOS 1.1.2 版本，新增两条提醒语音，修复专注模式悬浮窗状态刷新问题。
 - 下一步（v1.2.0）：调整通话模式的 UI 设计，现在有点丑。完善陪伴模式功能
+- 2-16-2026（UTC-5）：MacOS v1.2.0beta1。陪伴模式加入白噪声和背景音乐。优化陪伴模式UI。
