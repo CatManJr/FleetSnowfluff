@@ -843,8 +843,10 @@ class MusicWindow(QDialog):
         self._jumpout_icon: QIcon | None = None
         self._icon_dir = self._icon_path.parent / "icon" if self._icon_path is not None else None
         self._button_icons: dict[str, QIcon] = {}
+        self._settings = QSettings("FleetSnowfluff", "MusicWindow")
         self._follow_count = 130
         self._is_following = False
+        self._load_follow_state()
 
         self.setWindowTitle("飞行雪绒电台")
         self.setWindowFlags(
@@ -1724,6 +1726,30 @@ class MusicWindow(QDialog):
         self.follow_count_label.setText(f"已关注：{self._follow_count}")
         self.follow_button.setText("已关注" if self._is_following else "关注")
 
+    def _load_follow_state(self) -> None:
+        raw_following = self._settings.value("follow/is_following", self._is_following)
+        if isinstance(raw_following, bool):
+            self._is_following = raw_following
+        elif isinstance(raw_following, (int, float)):
+            self._is_following = bool(raw_following)
+        elif isinstance(raw_following, str):
+            self._is_following = raw_following.strip().lower() in {"1", "true", "yes", "on"}
+
+        raw_count = self._settings.value("follow/count", self._follow_count)
+        if isinstance(raw_count, int):
+            self._follow_count = max(0, raw_count)
+        elif isinstance(raw_count, float):
+            self._follow_count = max(0, int(raw_count))
+        elif isinstance(raw_count, str):
+            try:
+                self._follow_count = max(0, int(raw_count.strip()))
+            except ValueError:
+                pass
+
+    def _save_follow_state(self) -> None:
+        self._settings.setValue("follow/is_following", self._is_following)
+        self._settings.setValue("follow/count", self._follow_count)
+
     def _on_follow_clicked(self) -> None:
         if self._is_following:
             self._is_following = False
@@ -1732,6 +1758,7 @@ class MusicWindow(QDialog):
             self._is_following = True
             self._follow_count += 1
         self._update_follow_ui()
+        self._save_follow_state()
 
     def _apply_main_button_icons(self) -> None:
         def apply(button: QPushButton, key: str, fallback: str, size: int = 24) -> None:
@@ -1878,6 +1905,7 @@ class MusicWindow(QDialog):
     def closeEvent(self, event: QCloseEvent) -> None:
         self._progress_timer.stop()
         self._pending_enter_mini_mode = False
+        self._save_follow_state()
         if self.volume_popup.isVisible():
             self.volume_popup.hide()
         self._hide_mini_bar()
