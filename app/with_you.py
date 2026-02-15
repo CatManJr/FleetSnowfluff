@@ -339,10 +339,33 @@ class WithYouWindow(QDialog):
 
         self._answer_path = self._pick_media(("answering.mov", "answering.mp4", "answering.MOV", "answering.MP4"))
         self._hangup_path = self._pick_media(("hangup.mov", "hangup.mp4", "hangup.MOV", "hangup.MP4"))
-        self._break_path = self._pick_media(("break.mov", "break.mp4", "break.MOV", "break.MP4"))
+        self._break_paths = self._pick_media_candidates(
+            (
+                "break1.mov",
+                "break1.mp4",
+                "break1.MOV",
+                "break1.MP4",
+                "break2.mov",
+                "break2.mp4",
+                "break2.MOV",
+                "break2:.MP4",
+                "break2.MP4",
+                "break3.mov",
+                "break3.mp4",
+                "break3.MOV",
+                "break3.MP4",
+            )
+        )
         self._start1_path = self._pick_media(("start1.mov", "start1.mp4", "start1.MOV", "start1.MP4"))
         self._start2_path = self._pick_media(("start2.mov", "start2.mp4", "start2.MOV", "start2.MP4"))
-        self._end_path = self._pick_media(("end.mov", "end.mp4", "end.MOV", "end.MP4"))
+        self._end_paths = self._pick_media_candidates(
+            (
+                "end.mov",
+                "end.mp4",
+                "end.MOV",
+                "end.MP4",
+            )
+        )
         self._start_sfx_path = self._pick_media(("start.mp3", "start.MP3", "start.wav", "start.WAV"))
         self._withyou_path = self._pick_media(
             ("withyou.mov", "withyou.mp4", "with_you.mov", "with_you.mp4", "withyou.MOV", "withyou.MP4")
@@ -792,6 +815,14 @@ class WithYouWindow(QDialog):
                 return p
         return None
 
+    def _pick_media_candidates(self, names: tuple[str, ...]) -> list[Path]:
+        candidates: list[Path] = []
+        for name in names:
+            p = self._call_dir / name
+            if p.exists():
+                candidates.append(p)
+        return candidates
+
     def _play_media(self, media_path: Path, *, loop: bool) -> None:
         resolved = str(media_path.resolve())
         if (
@@ -842,10 +873,10 @@ class WithYouWindow(QDialog):
         self._player.stop()
         self._break_intro_playing = False
         self._start_intro_playing = False
-        if self._end_path is not None:
+        if self._end_paths:
             self._end_outro_playing = True
             self._set_cinematic_mode(fill=True)
-            self._play_media(self._end_path, loop=False)
+            self._play_media(random.choice(self._end_paths), loop=False)
             return
         self._enter_config(preserve_progress=False)
 
@@ -1041,25 +1072,30 @@ class WithYouWindow(QDialog):
         if self._is_paused:
             return
         self._remaining_seconds -= 1
+        stage_changed = False
         if self._remaining_seconds <= 0:
             if self._is_break_phase:
                 if self._current_round >= self._total_rounds:
                     self._finish_all_rounds()
                     return
                 self._is_break_phase = False
+                stage_changed = True
                 self._current_round += 1
                 self._remaining_seconds = self._round_seconds
                 self.status_label.setText("专注中")
                 self._play_focus_entry_media()
             else:
                 self._is_break_phase = True
+                stage_changed = True
                 self._remaining_seconds = self._break_seconds
                 self.status_label.setText("休息中")
-                if self._break_path is not None:
+                if self._break_paths:
                     self._break_intro_playing = True
                     self._set_cinematic_mode(fill=True)
-                    self._play_media(self._break_path, loop=False)
+                    self._play_media(random.choice(self._break_paths), loop=False)
             self._sync_round_ui()
+        if stage_changed:
+            self._update_mini_bar_state()
         self._sync_countdown_ui()
 
     def _toggle_pause(self) -> None:
@@ -1091,10 +1127,10 @@ class WithYouWindow(QDialog):
             self._is_break_phase = True
             self._remaining_seconds = self._break_seconds
             self.status_label.setText("休息中")
-            if self._break_path is not None:
+            if self._break_paths:
                 self._break_intro_playing = True
                 self._set_cinematic_mode(fill=True)
-                self._play_media(self._break_path, loop=False)
+                self._play_media(random.choice(self._break_paths), loop=False)
         self._sync_round_ui()
         self._sync_countdown_ui()
         self._set_pause_button_state()
