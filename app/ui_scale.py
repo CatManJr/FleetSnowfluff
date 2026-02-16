@@ -18,9 +18,17 @@ def _clamp(value: float, low: float, high: float) -> float:
 def screen_scale(screen: QScreen | None) -> float:
     if screen is None:
         return 1.0
-    logical_dpi = float(screen.logicalDotsPerInch())
+    try:
+        logical_dpi = float(screen.logicalDotsPerInch())
+    except RuntimeError:
+        # Screen can be destroyed during monitor/window transitions.
+        return 1.0
     if logical_dpi <= 0:
-        return _clamp(float(screen.devicePixelRatio()) or 1.0, _MIN_SCALE, _MAX_SCALE)
+        try:
+            dpr = float(screen.devicePixelRatio()) or 1.0
+        except RuntimeError:
+            return 1.0
+        return _clamp(dpr, _MIN_SCALE, _MAX_SCALE)
     return _clamp(logical_dpi / _BASE_DPI, _MIN_SCALE, _MAX_SCALE)
 
 
@@ -87,7 +95,11 @@ class AppScaleController(QObject):
 
     def _refresh_now(self) -> None:
         self._refresh_scheduled = False
-        scale = screen_scale(self._pick_reference_screen())
+        try:
+            scale = screen_scale(self._pick_reference_screen())
+        except RuntimeError:
+            # Defensive fallback against transient Qt object lifetimes.
+            scale = 1.0
         self._app.setProperty("ui_scale_factor", scale)
         scaled_font = QFont(self._base_font)
         scaled_font.setPointSizeF(self._base_point_size * scale)

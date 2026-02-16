@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QSettings, QSize, Qt, QTimer, QUrl
-from PySide6.QtGui import QAction, QCursor, QGuiApplication, QIcon, QMouseEvent, QMovie, QPixmap, QTransform
+from PySide6.QtGui import QAction, QCursor, QDesktopServices, QGuiApplication, QIcon, QMouseEvent, QMovie, QPixmap, QTransform
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import QApplication, QFileDialog, QLabel, QMenu, QMessageBox, QSystemTrayIcon
 
@@ -129,14 +129,7 @@ class Aemeath(QLabel):
             return False
 
     def _load_persona_prompt(self) -> str:
-        candidates = [
-            # Packaged app path (preferred)
-            self.resources_dir / "config" / "FleetSnowfluff.json",
-            # Source-run path
-            self.resources_dir.parent / "src" / "config" / "FleetSnowfluff.json",
-            # Fallback for alternative layouts
-            self.resources_dir.parent / "config" / "FleetSnowfluff.json",
-        ]
+        candidates = self._persona_prompt_candidates()
         raw = ""
         for prompt_path in candidates:
             if not prompt_path.exists():
@@ -187,11 +180,81 @@ class Aemeath(QLabel):
         structured = "\n\n".join(parts)
         return structured[:14000]
 
+    def _persona_prompt_candidates(self) -> list[Path]:
+        return [
+            # User-editable runtime file (preferred)
+            self._config_path.parent / "FleetSnowfluff.json",
+            # Packaged app path
+            self.resources_dir / "config" / "FleetSnowfluff.json",
+            # Source-run path
+            self.resources_dir.parent / "src" / "config" / "FleetSnowfluff.json",
+            # Fallback for alternative layouts
+            self.resources_dir.parent / "config" / "FleetSnowfluff.json",
+        ]
+
+    def _ensure_editable_persona_json(self) -> Path | None:
+        editable = self._config_path.parent / "FleetSnowfluff.json"
+        try:
+            editable.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return None
+        if editable.exists():
+            return editable
+        for src in self._persona_prompt_candidates()[1:]:
+            if not src.exists():
+                continue
+            try:
+                shutil.copy2(src, editable)
+                return editable
+            except OSError:
+                continue
+        try:
+            editable.write_text("{}", encoding="utf-8")
+            return editable
+        except OSError:
+            return None
+
+    def _open_chat_history_json_quick(self) -> None:
+        history_path = self._config_path.parent / "chat_history.jsonl"
+        try:
+            history_path.parent.mkdir(parents=True, exist_ok=True)
+            if not history_path.exists():
+                history_path.write_text("", encoding="utf-8")
+        except OSError:
+            QMessageBox.warning(self, "打开失败", "无法创建聊天记录文件，请检查目录权限。")
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(history_path.parent))):
+            QMessageBox.warning(self, "打开失败", f"无法打开目录：{history_path.parent}")
+
+    def _open_persona_json_quick(self) -> None:
+        persona_path = self._ensure_editable_persona_json()
+        if persona_path is None:
+            QMessageBox.warning(self, "打开失败", "无法创建人设文件，请检查目录权限。")
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(persona_path.parent))):
+            QMessageBox.warning(self, "打开失败", f"无法打开目录：{persona_path.parent}")
+
     def _resolve_config_path(self) -> Path:
         app_dir = self._app_data_dir("FleetSnowfluff")
-        legacy_dir = self._app_data_dir("Aemeath")
-        self._migrate_legacy_app_data(legacy_dir=legacy_dir, app_dir=app_dir)
+        for legacy_dir in self._legacy_app_data_dirs():
+            self._migrate_legacy_app_data(legacy_dir=legacy_dir, app_dir=app_dir)
         return app_dir / "settings.json"
+
+    def _legacy_app_data_dirs(self) -> list[Path]:
+        """
+        Candidate legacy runtime data locations from older releases/names.
+        """
+        names = ("Aemeath", "Fleet Snowfluff", "fleet_snowfluff")
+        dirs: list[Path] = []
+        seen: set[Path] = set()
+        current_dir = self._app_data_dir("FleetSnowfluff")
+        for name in names:
+            candidate = self._app_data_dir(name)
+            if candidate == current_dir or candidate in seen:
+                continue
+            seen.add(candidate)
+            dirs.append(candidate)
+        return dirs
 
     def _app_data_dir(self, app_name: str) -> Path:
         if sys.platform == "darwin":
@@ -203,8 +266,8 @@ class Aemeath(QLabel):
 
     def _migrate_legacy_app_data(self, legacy_dir: Path, app_dir: Path) -> None:
         """
-        Migrate user data from old app naming to FleetSnowfluff.
-        Copy-only strategy prevents accidental data loss.
+        Migrate user data from old app naming/locations to FleetSnowfluff.
+        Copy-only strategy prevents accidental data loss and never overwrites.
         """
         if legacy_dir == app_dir or not legacy_dir.exists():
             return
@@ -212,12 +275,8 @@ class Aemeath(QLabel):
             app_dir.mkdir(parents=True, exist_ok=True)
         except OSError:
             return
-        # Never migrate sensitive per-user secrets/history across app names.
-        blocked_filenames = {"settings.json", "chat_history.jsonl"}
         for src in legacy_dir.rglob("*"):
             rel = src.relative_to(legacy_dir)
-            if src.is_file() and src.name in blocked_filenames:
-                continue
             dst = app_dir / rel
             try:
                 if src.is_dir():
@@ -259,13 +318,24 @@ class Aemeath(QLabel):
             pass
 
     def _save_config(self) -> bool:
-        payload = {
-            "deepseek_api_key": self._api_key,
-            "reasoning_enabled": self._reasoning_enabled,
-            "min_jump_distance_px": self._min_jump_distance_px,
-            "flight_speed_px": self._flight_base_speed_px,
-            "chat_context_turns": self._chat_context_turns,
-        }
+        payload: dict[str, Any] = {}
+        try:
+            if self._config_path.exists():
+                raw = self._config_path.read_text(encoding="utf-8")
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    payload = dict(parsed)
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+        payload.update(
+            {
+                "deepseek_api_key": self._api_key,
+                "reasoning_enabled": self._reasoning_enabled,
+                "min_jump_distance_px": self._min_jump_distance_px,
+                "flight_speed_px": self._flight_base_speed_px,
+                "chat_context_turns": self._chat_context_turns,
+            }
+        )
         try:
             self._config_path.parent.mkdir(parents=True, exist_ok=True)
             self._config_path.write_text(
@@ -325,9 +395,14 @@ class Aemeath(QLabel):
             flight_speed=self._flight_base_speed_px,
             reasoning_enabled=self._reasoning_enabled,
             chat_context_turns=self._chat_context_turns,
+            open_chat_history_callback=self._open_chat_history_json_quick,
+            open_persona_callback=self._open_persona_json_quick,
             parent=None,
         )
-        if dialog.exec() != SettingsDialog.DialogCode.Accepted:
+        result = dialog.exec()
+        # Persona file can be edited from quick actions while dialog is open.
+        self._persona_prompt = self._load_persona_prompt()
+        if result != SettingsDialog.DialogCode.Accepted:
             return
         self._api_key = dialog.api_key()
         self._reasoning_enabled = dialog.reasoning_enabled()
@@ -686,6 +761,7 @@ class Aemeath(QLabel):
         self._transform_action = self._menu.addAction("爱弥斯，变身！")
         self._hacker_action = self._menu.addAction("电子幽灵登场！")
         self._music_action = self._menu.addAction("你看，又唱")
+        self._settings_action = self._menu.addAction("设置")
         self._focus_status_action = self._menu.addAction("")
         self._focus_status_action.setEnabled(False)
         self._focus_status_action.setVisible(False)
@@ -700,6 +776,7 @@ class Aemeath(QLabel):
         self._seal_action.triggered.connect(self._toggle_seals)
         self._tray_focus_action.triggered.connect(self._toggle_focus_hide_mascot)
         self._music_action.triggered.connect(self._play_random_music)
+        self._settings_action.triggered.connect(self._show_settings_dialog)
         self._exit_action.triggered.connect(self._quit_app)
         self._menu.aboutToShow.connect(self._refresh_menu_labels)
         self._setup_tray_icon()

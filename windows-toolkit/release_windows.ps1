@@ -37,23 +37,42 @@ $IssPath = Join-Path $ScriptDir "release_windows.iss"
 $InstallerPath = Join-Path $ReleaseDir "$InstallerBaseName.exe"
 
 function Remove-DeveloperData {
-    $paths = @(
-        (Join-Path $env:APPDATA "FleetSnowfluff"),
-        (Join-Path $env:APPDATA "Aemeath"),
-        (Join-Path $env:LOCALAPPDATA "FleetSnowfluff"),
-        (Join-Path $env:LOCALAPPDATA "Aemeath")
+    # Intentionally no-op:
+    # keep developer's local usage traces and settings untouched.
+    # Packaging sanitization is handled on build artifacts only.
+    Write-Host "   skip local data cleanup (keep developer history/settings)"
+}
+
+function Test-ReleaseBundleSafety {
+    param(
+        [string]$TargetDir
     )
 
-    foreach ($dir in $paths) {
-        $chat = Join-Path $dir "chat_history.jsonl"
-        $settings = Join-Path $dir "settings.json"
-        if (Test-Path $chat) {
-            Remove-Item $chat -Force
-            Write-Host "   removed $chat"
+    $forbidden = @("settings.json", "chat_history.jsonl")
+    foreach ($name in $forbidden) {
+        $hit = Get-ChildItem -Path $TargetDir -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq $name } | Select-Object -First 1
+        if ($hit) {
+            throw "Sensitive runtime file leaked into bundle: $($hit.FullName)"
         }
-        if (Test-Path $settings) {
-            Remove-Item $settings -Force
-            Write-Host "   removed $settings (API key)"
+    }
+
+    $canary = $env:RELEASE_CANARY
+    if ($canary) {
+        $files = Get-ChildItem -Path $TargetDir -Recurse -File -ErrorAction SilentlyContinue
+        foreach ($f in $files) {
+            try {
+                if ($f.Length -gt 8MB) { continue }
+                $content = [System.IO.File]::ReadAllText($f.FullName)
+                if ($content -like "*$canary*") {
+                    throw "LEAKED_CANARY::$($f.FullName)"
+                }
+            } catch {
+                if ($_.Exception.Message -like "LEAKED_CANARY::*") {
+                    $path = $_.Exception.Message.Substring("LEAKED_CANARY::".Length)
+                    throw "RELEASE_CANARY leaked into bundle: $path"
+                }
+                # Ignore unreadable/binary files.
+            }
         }
     }
 }
@@ -237,6 +256,9 @@ if (-not (Test-Path $AppExePath)) {
     throw "Build failed: executable not found at $AppExePath"
 }
 
+Write-Host "==> Auditing bundle for sensitive data leakage"
+Test-ReleaseBundleSafety -TargetDir $AppDistDir
+
 Write-Host "==> Creating installer with Inno Setup"
 $iss = @"
 [Setup]
@@ -267,6 +289,12 @@ Name: "{autodesktop}\$AppName"; Filename: "{app}\$AppName.exe"; Tasks: desktopic
 
 [Run]
 Filename: "{app}\$AppName.exe"; Description: "Launch $AppName"; Flags: nowait postinstall skipifsilent
+
+[UninstallDelete]
+Type: filesandordirs; Name: "{userappdata}\FleetSnowfluff"
+Type: filesandordirs; Name: "{localappdata}\FleetSnowfluff"
+Type: filesandordirs; Name: "{userappdata}\Aemeath"
+Type: filesandordirs; Name: "{localappdata}\Aemeath"
 "@
 $iss | Set-Content -Path $IssPath -Encoding UTF8
 

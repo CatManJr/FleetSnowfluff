@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import random
 import sys
 import time
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Union, cast
 
@@ -108,9 +110,9 @@ class StickyNoteWindow(QDialog):
         root.addWidget(tabs, 1)
 
         btn_row = QHBoxLayout()
-        clear_btn = QPushButton("清空绘画", self)
-        clear_btn.setToolTip("清空当前绘画内容")
-        clear_btn.clicked.connect(self._draw.clear_canvas)
+        clear_btn = QPushButton("清除", self)
+        clear_btn.setToolTip("清除文字与绘画内容")
+        clear_btn.clicked.connect(self._clear_all_content)
         btn_row.addStretch(1)
         btn_row.addWidget(clear_btn)
         root.addLayout(btn_row)
@@ -157,10 +159,15 @@ class StickyNoteWindow(QDialog):
             % px(14, scale)
         )
 
+    def _clear_all_content(self) -> None:
+        self._text.clear()
+        self._draw.clear_canvas()
+
 
 class MiniCallBar(QDialog):
     expandRequested = Signal()
     chatRequested = Signal()
+    pauseRequested = Signal()
     hangupRequested = Signal()
 
     def __init__(self, parent=None, theme_tokens: dict[str, str] | None = None) -> None:
@@ -177,7 +184,7 @@ class MiniCallBar(QDialog):
         if sys.platform == "darwin":
             # Keep tool windows visible across Spaces/fullscreen scenes on macOS.
             self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
-        self.setFixedSize(260, 92)
+        self.setFixedSize(300, 92)
 
         root = QHBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
@@ -205,6 +212,10 @@ class MiniCallBar(QDialog):
         self.expand_btn.setObjectName("miniBtn")
         self.expand_btn.setToolTip("展开完整通话窗口")
         self.expand_btn.clicked.connect(self.expandRequested.emit)
+        self.pause_btn = QPushButton("暂停", panel)
+        self.pause_btn.setObjectName("miniBtn")
+        self.pause_btn.setToolTip("暂停或继续计时")
+        self.pause_btn.clicked.connect(self.pauseRequested.emit)
         self.exit_btn = QPushButton("退出", panel)
         self.exit_btn.setObjectName("miniDanger")
         self.exit_btn.setToolTip("结束通话")
@@ -221,9 +232,11 @@ class MiniCallBar(QDialog):
         btn_row.setSpacing(8)
         self.chat_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.expand_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.pause_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.exit_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         btn_row.addWidget(self.chat_btn, 1)
         btn_row.addWidget(self.expand_btn, 1)
+        btn_row.addWidget(self.pause_btn, 1)
         btn_row.addWidget(self.exit_btn, 1)
 
         box.addLayout(top_row)
@@ -267,7 +280,7 @@ class MiniCallBar(QDialog):
             "mini_danger_hover_b": "#ffe8f0",
             "mini_danger_pressed_a": "#ffe8f1",
             "mini_danger_pressed_b": "#ffdbe8",
-            "font_family": '"SF Pro Rounded", "SF-Pro-Rounded-Regular", "PingFang SC", "Helvetica Neue", sans-serif',
+            "font_family": '"SF Pro Rounded", "PingFang SC", "Helvetica Neue", sans-serif',
         }
 
     def _build_stylesheet(self, scale: float) -> str:
@@ -375,9 +388,11 @@ class WithYouWindow(QDialog):
     callEnded = Signal()
     chatRequested = Signal()
 
-    def __init__(self, resources_dir: Path, parent=None) -> None:
+    def __init__(self, resources_dir: Path, config_dir: Path | None = None, parent=None) -> None:
         super().__init__(parent)
         self._resources_dir = resources_dir
+        self._config_dir = config_dir
+        self._settings_json_path = (config_dir / "settings.json") if config_dir is not None else None
         self._call_dir = resources_dir / "Call"
         self._note_window: StickyNoteWindow | None = None
         self._phase = "idle"  # idle / answering / config / running / hangup
@@ -450,11 +465,13 @@ class WithYouWindow(QDialog):
         self._noise_path: Path | None = self._first_audio_in_dir(self._noise_dir)
         self._with_you_settings = QSettings("FleetSnowfluff", "WithYou")
         self._config_opacity = self._load_config_opacity()
+        self._last_focus_date, self._companion_days, self._companion_streak_days = self._load_companion_stats()
         self._bgm_playlist: list[str] = []
         self._bgm_index = 0
         self._bgm_seek_block = False
         self._bgm_resume_position_ms = 0
         self._bgm_pending_seek_ms = 0
+        self._bgm_switching_source = False
 
         self.setWindowTitle("专注通话")
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.Tool)
@@ -493,6 +510,12 @@ class WithYouWindow(QDialog):
         top_box = QVBoxLayout(self._top_bar)
         top_box.setContentsMargins(8, 6, 8, 6)
         top_box.setSpacing(4)
+        self._last_focus_label = QLabel("")
+        self._last_focus_label.setObjectName("companionInfoTopLabel")
+        self._companion_days_label = QLabel("")
+        self._companion_days_label.setObjectName("companionInfoTopLabel")
+        top_box.addWidget(self._last_focus_label)
+        top_box.addWidget(self._companion_days_label)
         top_row = QHBoxLayout()
         top_row.setContentsMargins(0, 0, 0, 0)
         top_row.setSpacing(8)
@@ -658,6 +681,7 @@ class WithYouWindow(QDialog):
         opacity_card_layout.addWidget(opacity_label)
         opacity_card_layout.addLayout(opacity_row)
         settings_rows.addWidget(opacity_card, 1)
+        self._refresh_companion_labels()
 
         self.start_btn = QPushButton("开始专注")
         self.start_btn.setObjectName("primaryBtn")
@@ -894,6 +918,78 @@ class WithYouWindow(QDialog):
         if self.property("viewMode") == "config":
             self.setWindowOpacity(self._config_opacity / 100.0)
 
+    def _load_companion_stats(self) -> tuple[str, int, int]:
+        if self._settings_json_path is None or not self._settings_json_path.exists():
+            return "", 0, 0
+        try:
+            raw = self._settings_json_path.read_text(encoding="utf-8")
+            data = json.loads(raw)
+            if not isinstance(data, dict):
+                return "", 0, 0
+            last_focus_date = str(data.get("with_you_last_focus_date", "") or "").strip()
+            companion_days_raw = data.get("with_you_companion_days", 0)
+            companion_days = int(companion_days_raw) if companion_days_raw is not None else 0
+            companion_streak_raw = data.get("with_you_companion_streak_days", companion_days)
+            companion_streak_days = int(companion_streak_raw) if companion_streak_raw is not None else companion_days
+            if companion_days < 0:
+                companion_days = 0
+            if companion_streak_days < 0:
+                companion_streak_days = 0
+            return last_focus_date, companion_days, companion_streak_days
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return "", 0, 0
+
+    def _save_companion_stats(self) -> None:
+        if self._settings_json_path is None:
+            return
+        data: dict[str, object] = {}
+        try:
+            if self._settings_json_path.exists():
+                raw = self._settings_json_path.read_text(encoding="utf-8")
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    data = dict(parsed)
+        except (OSError, json.JSONDecodeError):
+            data = {}
+        data["with_you_last_focus_date"] = self._last_focus_date
+        data["with_you_companion_days"] = int(max(0, self._companion_days))
+        data["with_you_companion_streak_days"] = int(max(0, self._companion_streak_days))
+        try:
+            self._settings_json_path.parent.mkdir(parents=True, exist_ok=True)
+            self._settings_json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError:
+            return
+
+    def _refresh_companion_labels(self) -> None:
+        if not hasattr(self, "_last_focus_label"):
+            return
+        date_text = self._last_focus_date if self._last_focus_date else "--"
+        self._last_focus_label.setText(f"上次小爱陪你专注：{date_text}")
+        streak = max(0, self._companion_streak_days)
+        streak_emoji = "🔥" if streak > 7 else "🌱"
+        self._companion_days_label.setText(
+            f"小爱同学已陪伴你 {max(0, self._companion_days)} 天（连续 {streak} 天 {streak_emoji}）"
+        )
+
+    def _record_focus_companion_completion(self) -> None:
+        today = date.today().isoformat()
+        if self._last_focus_date == today:
+            return
+        previous_date = None
+        if self._last_focus_date:
+            try:
+                previous_date = date.fromisoformat(self._last_focus_date)
+            except ValueError:
+                previous_date = None
+        if previous_date is not None and previous_date + timedelta(days=1) == date.today():
+            self._companion_streak_days = max(1, self._companion_streak_days + 1)
+        else:
+            self._companion_streak_days = 1
+        self._last_focus_date = today
+        self._companion_days = max(0, self._companion_days) + 1
+        self._save_companion_stats()
+        self._refresh_companion_labels()
+
     def _on_ambient_enabled_changed(self, _state: int) -> None:
         self._save_ambient_state()
         if self._ambient_enabled_cb.isChecked():
@@ -930,6 +1026,17 @@ class WithYouWindow(QDialog):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(8)
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(6)
+        header_row.addWidget(QLabel("背景噪声", panel))
+        header_row.addStretch(1)
+        close_btn = QPushButton("关闭", panel)
+        close_btn.setObjectName("ghostBtn")
+        close_btn.setToolTip("关闭噪声设置面板")
+        close_btn.clicked.connect(self._noise_popup.hide)
+        header_row.addWidget(close_btn)
+        layout.addLayout(header_row)
         self._ambient_enabled_cb = QCheckBox("播放噪声（雪夜炉火）", panel)
         self._ambient_enabled_cb.stateChanged.connect(self._on_ambient_enabled_changed)
         layout.addWidget(self._ambient_enabled_cb)
@@ -961,6 +1068,17 @@ class WithYouWindow(QDialog):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(8)
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(6)
+        header_row.addWidget(QLabel("背景音乐", panel))
+        header_row.addStretch(1)
+        close_btn = QPushButton("关闭", panel)
+        close_btn.setObjectName("ghostBtn")
+        close_btn.setToolTip("关闭 BGM 设置面板")
+        close_btn.clicked.connect(self._bgm_popup.hide)
+        header_row.addWidget(close_btn)
+        layout.addLayout(header_row)
         self._bgm_enabled_cb = QCheckBox("播放 BGM", panel)
         self._bgm_enabled_cb.stateChanged.connect(self._on_bgm_enabled_changed)
         layout.addWidget(self._bgm_enabled_cb)
@@ -1061,11 +1179,16 @@ class WithYouWindow(QDialog):
 
     def _on_bgm_media_status_changed(self, status) -> None:
         if status == QMediaPlayer.MediaStatus.LoadedMedia:
+            self._bgm_switching_source = False
             if self._bgm_pending_seek_ms > 0:
                 self._bgm_player.setPosition(self._bgm_pending_seek_ms)
                 self._bgm_pending_seek_ms = 0
             self._bgm_player.play()
         elif status == QMediaPlayer.MediaStatus.EndOfMedia:
+            # Guard against transient EndOfMedia events emitted during
+            # stop/setSource switching, which can cause accidental next-track jumps.
+            if self._bgm_switching_source:
+                return
             if self._bgm_loop_cb.isChecked():
                 self._bgm_resume_position_ms = 0
                 self._bgm_player.setPosition(0)
@@ -1092,6 +1215,7 @@ class WithYouWindow(QDialog):
         self._bgm_audio.setVolume(self._bgm_volume_slider.value() / 100.0)
         self._bgm_pending_seek_ms = max(0, start_position_ms)
         self._bgm_resume_position_ms = self._bgm_pending_seek_ms
+        self._bgm_switching_source = True
         self._bgm_player.stop()
         self._bgm_player.setSource(QUrl())
         self._bgm_player.setSource(QUrl.fromLocalFile(path))
@@ -1109,7 +1233,7 @@ class WithYouWindow(QDialog):
     def _on_bgm_enabled_changed(self, _state: int) -> None:
         self._save_bgm_state()
         if self._bgm_enabled_cb.isChecked():
-            if self._phase == "running":
+            if self._phase in ("running", "config"):
                 self._start_bgm()
         else:
             self._stop_bgm()
@@ -1124,7 +1248,7 @@ class WithYouWindow(QDialog):
         self._with_you_settings.setValue("bgm/index", row)
         self._bgm_resume_position_ms = 0
         self._with_you_settings.setValue("bgm/position_ms", 0)
-        if self._phase == "running":
+        if self._phase in ("running", "config") and self._bgm_enabled_cb.isChecked():
             self._bgm_play_index(self._bgm_index, start_position_ms=0)
 
     def _on_bgm_seek_moved(self, position: int) -> None:
@@ -1174,6 +1298,7 @@ class WithYouWindow(QDialog):
     def _stop_bgm(self) -> None:
         self._bgm_resume_position_ms = max(0, self._bgm_player.position())
         self._with_you_settings.setValue("bgm/position_ms", self._bgm_resume_position_ms)
+        self._bgm_switching_source = False
         self._bgm_player.stop()
         self._bgm_player.setSource(QUrl())
         self._bgm_seek_slider.setRange(0, 0)
@@ -1301,6 +1426,14 @@ class WithYouWindow(QDialog):
                 border: none;
                 border-radius: 14px;
             }}
+            QLabel#companionInfoTopLabel {{
+                font-size: {px(13, scale)}px;
+                color: {t["status_text"]};
+                font-weight: 600;
+            }}
+            QDialog[viewMode="config"] QLabel#companionInfoTopLabel {{
+                color: {t["settings_text"]};
+            }}
             QLabel#countdownLabel {{
                 font-size: {px(56, scale)}px;
                 font-weight: 800;
@@ -1389,6 +1522,10 @@ class WithYouWindow(QDialog):
         self.update()
 
     def open_call(self) -> None:
+        # Re-read companion stats so external/manual settings.json edits
+        # are reflected each time the call window is reopened.
+        self._last_focus_date, self._companion_days, self._companion_streak_days = self._load_companion_stats()
+        self._refresh_companion_labels()
         if self._mini_bar is not None and self._mini_bar.isVisible():
             self._mini_bar.hide()
         self.show()
@@ -1517,6 +1654,7 @@ class WithYouWindow(QDialog):
         self._player.stop()
         self._break_intro_playing = False
         self._start_intro_playing = False
+        self._record_focus_companion_completion()
         if self._end_paths:
             self._end_outro_playing = True
             self._set_cinematic_mode(fill=True)
@@ -1628,7 +1766,6 @@ class WithYouWindow(QDialog):
         self._sync_countdown_ui()
         self._tick.start()
         self._update_mini_bar_state()
-        self._refresh_bgm_playlist()
         self._play_focus_entry_media()
         # 点击开始专注后自动播放：界面切换完成后再启动背景噪声与 BGM，避免设备未就绪
         QTimer.singleShot(150, self._start_focus_audio)
@@ -1923,6 +2060,7 @@ class WithYouWindow(QDialog):
             self._mini_bar = MiniCallBar(parent=None, theme_tokens=self._focus_theme_tokens())
             self._mini_bar.expandRequested.connect(self._exit_mini_mode)
             self._mini_bar.chatRequested.connect(self._request_chat_window)
+            self._mini_bar.pauseRequested.connect(self._toggle_pause)
             self._mini_bar.hangupRequested.connect(self._start_hangup)
             self._apply_mini_bar_icons()
         return self._mini_bar
@@ -2070,6 +2208,7 @@ class WithYouWindow(QDialog):
         self._apply_icon_to_button(self.return_btn, "返回当前进度", ("return.png", "return.PNG"))
         self._apply_icon_to_button(self.exit_btn, "退出", ("exit", "exit.png", "exit.PNG", "exitfull.png"))
         self._apply_icon_to_button(self.note_btn, "便利贴", ("post-it.png", "post-it.PNG", "notepad.png", "notepad.PNG"))
+        self._set_pause_button_state()
 
     def _apply_mini_bar_icons(self) -> None:
         if self._mini_bar is None:
@@ -2077,19 +2216,38 @@ class WithYouWindow(QDialog):
         self._apply_icon_to_button(self._mini_bar.chat_btn, "聊天窗口", ("chat.png", "chat.PNG", "jumpout.png"), size=18)
         self._apply_icon_to_button(self._mini_bar.expand_btn, "展开", ("expand.png", "fullscreen.jpeg"), size=18)
         self._apply_icon_to_button(self._mini_bar.exit_btn, "退出", ("exit", "exit.png", "exit.PNG", "exitfull.png"), size=18)
+        self._set_pause_button_state()
+
+    def _set_pause_button_visual(self, button: QPushButton, *, paused: bool, mini: bool = False) -> None:
+        icon_size = 18 if mini else 20
+        if paused:
+            tip = "继续"
+            text = "继续"
+            icon_names = ("play.png", "play.PNG", "ic_play.png")
+        else:
+            tip = "暂停"
+            text = "暂停"
+            icon_names = ("pause.png", "pause.PNG", "ic_pause.png")
+        button.setToolTip(tip if mini else ("继续计时" if paused else "暂停计时"))
+        icon = self._load_icon(icon_names)
+        if icon is None:
+            button.setIcon(QIcon())
+            button.setText(text)
+            return
+        button.setIcon(icon)
+        button.setIconSize(QSize(icon_size, icon_size))
+        button.setText("")
 
     def _set_pause_button_state(self) -> None:
-        has_icon = self.pause_btn.icon().isNull() is False
-        if has_icon:
-            self.pause_btn.setToolTip("继续" if self._is_paused else "暂停")
-            return
-        self.pause_btn.setToolTip("继续计时" if self._is_paused else "暂停计时")
-        self.pause_btn.setText("继续" if self._is_paused else "暂停")
+        self._set_pause_button_visual(self.pause_btn, paused=self._is_paused, mini=False)
+        if self._mini_bar is not None:
+            self._set_pause_button_visual(self._mini_bar.pause_btn, paused=self._is_paused, mini=True)
 
     def _update_mini_bar_state(self) -> None:
         if self._mini_bar is None:
             self._update_status_tray_state()
             return
+        self._mini_bar.pause_btn.setEnabled(self._phase == "running")
         if self._phase == "running":
             if self._is_paused:
                 self._mini_bar.set_status("● 已暂停")

@@ -214,7 +214,7 @@ class ChatWindow(QDialog):
             "timeline_item_assistant_bottom": "#f6f8fb",
             "timeline_item_assistant_border": "#d7e0e9",
             "timestamp": "#8b96a6",
-            "font_family": '"SF Pro Rounded", "SF-Pro-Rounded-Regular", "PingFang SC", "Helvetica Neue", sans-serif',
+            "font_family": '"SF Pro Rounded", "PingFang SC", "Helvetica Neue", sans-serif',
         }
 
     @staticmethod
@@ -1007,6 +1007,7 @@ class ChatWindow(QDialog):
         if self._with_you_window is None:
             self._with_you_window = WithYouWindow(
                 resources_dir=self._resources_dir,
+                config_dir=self._config_dir,
                 parent=None,
             )
             self._with_you_window.chatRequested.connect(self._show_chat_during_call)

@@ -98,20 +98,54 @@ PY
 }
 
 clean_developer_chat_history() {
-  local dirs=(
-    "${APP_SUPPORT_DIR}/FleetSnowfluff"
-    "${APP_SUPPORT_DIR}/Aemeath"
-  )
-  for data_dir in "${dirs[@]}"; do
-    if [[ -f "${data_dir}/chat_history.jsonl" ]]; then
-      rm -f "${data_dir}/chat_history.jsonl"
-      echo "   removed ${data_dir}/chat_history.jsonl"
-    fi
-    if [[ -f "${data_dir}/settings.json" ]]; then
-      rm -f "${data_dir}/settings.json"
-      echo "   removed ${data_dir}/settings.json (API key)"
+  # Intentionally no-op:
+  # keep developer's local usage traces and settings untouched.
+  # Packaging sanitization is handled on build artifacts only.
+  echo "   skip local data cleanup (keep developer history/settings)"
+}
+
+audit_release_bundle() {
+  local app_bundle="$1"
+  local canary="${RELEASE_CANARY:-}"
+  local leaked=0
+
+  for name in "settings.json" "chat_history.jsonl"; do
+    if [[ -n "$(find "${app_bundle}" -type f -name "${name}" -print -quit)" ]]; then
+      echo "ERROR: found forbidden runtime data file in bundle: ${name}"
+      leaked=1
     fi
   done
+
+  if [[ -n "${canary}" ]]; then
+    if ! /usr/bin/python3 - "${app_bundle}" "${canary}" <<'PY'
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+needle = sys.argv[2]
+for p in root.rglob("*"):
+    if not p.is_file():
+        continue
+    try:
+        if p.stat().st_size > 8 * 1024 * 1024:
+            continue
+        data = p.read_bytes()
+    except OSError:
+        continue
+    if needle.encode("utf-8") in data:
+        print(p)
+        raise SystemExit(2)
+raise SystemExit(0)
+PY
+    then
+      echo "ERROR: found RELEASE_CANARY in bundle files."
+      leaked=1
+    fi
+  fi
+
+  if [[ $leaked -ne 0 ]]; then
+    exit 1
+  fi
 }
 
 echo "==> Sync dependencies"
@@ -161,11 +195,36 @@ fi
 
 echo "==> Sanitizing bundle (remove developer local data artifacts)"
 find "${APP_BUNDLE}" -type f \( -name "chat_history.jsonl" -o -name "settings.json" \) -delete || true
+echo "==> Auditing bundle for sensitive data leakage"
+audit_release_bundle "${APP_BUNDLE}"
 
 echo "==> Packaging DMG"
 mkdir -p "${DMG_STAGE_DIR}"
 cp -R "${APP_BUNDLE}" "${DMG_STAGE_DIR}/"
 ln -s /Applications "${DMG_STAGE_DIR}/Applications"
+cat > "${DMG_STAGE_DIR}/Uninstall and Cleanup.command" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_NAME="Fleet Snowfluff"
+APP_PATH="/Applications/${APP_NAME}.app"
+APP_SUPPORT_DIR="${HOME}/Library/Application Support"
+
+echo "This will remove app and local sensitive data:"
+echo "  - ${APP_PATH}"
+echo "  - ${APP_SUPPORT_DIR}/FleetSnowfluff"
+echo "  - ${APP_SUPPORT_DIR}/Aemeath"
+read -r -p "Continue? [y/N] " ans
+if [[ ! "${ans}" =~ ^[Yy]$ ]]; then
+  echo "Cancelled."
+  exit 0
+fi
+
+rm -rf "${APP_PATH}"
+rm -rf "${APP_SUPPORT_DIR}/FleetSnowfluff" "${APP_SUPPORT_DIR}/Aemeath"
+echo "Done."
+EOF
+chmod +x "${DMG_STAGE_DIR}/Uninstall and Cleanup.command"
 hdiutil create \
   -volname "${APP_NAME}" \
   -srcfolder "${DMG_STAGE_DIR}" \

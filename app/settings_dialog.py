@@ -1,7 +1,20 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtCore import QEvent
-from PySide6.QtWidgets import QApplication, QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QSpinBox, QVBoxLayout
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QHBoxLayout,
+    QLineEdit,
+    QPushButton,
+    QSpinBox,
+    QVBoxLayout,
+)
 
 from .ui_scale import current_app_scale, px
 
@@ -14,6 +27,8 @@ class SettingsDialog(QDialog):
         flight_speed: int,
         reasoning_enabled: bool,
         chat_context_turns: int,
+        open_chat_history_callback: Callable[[], None] | None = None,
+        open_persona_callback: Callable[[], None] | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -58,15 +73,30 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
+        quick_actions = QHBoxLayout()
+        open_history_btn = QPushButton("打开本地聊天记录 JSON")
+        open_history_btn.setObjectName("quickActionBtn")
+        open_history_btn.setEnabled(open_chat_history_callback is not None)
+        if open_chat_history_callback is not None:
+            open_history_btn.clicked.connect(open_chat_history_callback)
+        open_persona_btn = QPushButton("打开人设 JSON")
+        open_persona_btn.setObjectName("quickActionBtn")
+        open_persona_btn.setEnabled(open_persona_callback is not None)
+        if open_persona_callback is not None:
+            open_persona_btn.clicked.connect(open_persona_callback)
+        quick_actions.addWidget(open_history_btn, 1)
+        quick_actions.addWidget(open_persona_btn, 1)
+
         root = QVBoxLayout(self)
         root.addLayout(form)
+        root.addLayout(quick_actions)
         root.addWidget(buttons)
         self._apply_scaled_styles()
 
     def _apply_scaled_styles(self) -> None:
         app = QApplication.instance()
         scale = current_app_scale(app) if app is not None else 1.0
-        fs = px(13, scale)
+        fs = px(15, scale)
         self.setStyleSheet(
             """
             QDialog {
@@ -110,8 +140,31 @@ class SettingsDialog(QDialog):
                 border-color: #ff8fc1;
                 background: #ffe7f3;
             }
+            QPushButton#quickActionBtn {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #fff0f8,
+                    stop:1 #ffe4f1
+                );
+                border: 1px solid #ffb7d6;
+                border-radius: 10px;
+                color: #8d365d;
+                min-height: 30px;
+                padding: 4px 10px;
+                font-size: %dpx;
+                font-weight: 600;
+            }
+            QPushButton#quickActionBtn:hover {
+                border-color: #ff8fc1;
+                background: #ffe7f3;
+            }
+            QPushButton#quickActionBtn:disabled {
+                color: #b88aa0;
+                border-color: #f0cade;
+                background: #fff8fb;
+            }
             """
-            % (fs, fs, fs, fs)
+            % (fs, fs, fs, fs, fs)
         )
 
     def event(self, event) -> bool:
