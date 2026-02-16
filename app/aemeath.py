@@ -33,7 +33,6 @@ class Aemeath(QLabel):
         super().__init__()
         self.resources_dir = resources_dir
         self._config_path = self._resolve_config_path()
-        self._api_key = ""
         self._reasoning_enabled = False
         self._chat_context_turns = 20
         self.idle_ids = [1, 2, 3, 4, 5, 6, 7]
@@ -60,7 +59,6 @@ class Aemeath(QLabel):
         self._transform_restore_fullscreen_mode = False
         self._hidden_windows_before_transform: dict[str, object] = {}
         self._is_shutting_down = False
-        self._persona_prompt = self._load_persona_prompt()
         self._playlist_order: list[Path] = []
         self._playlist_index: int = -1
         self._pending_autoplay_music = False
@@ -240,6 +238,21 @@ class Aemeath(QLabel):
             self._migrate_legacy_app_data(legacy_dir=legacy_dir, app_dir=app_dir)
         return app_dir / "settings.json"
 
+    def _read_config_json(self) -> dict[str, Any]:
+        if not self._config_path.exists():
+            return {}
+        try:
+            parsed = json.loads(self._config_path.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict):
+                return dict(parsed)
+        except (OSError, json.JSONDecodeError):
+            pass
+        return {}
+
+    def _read_api_key_from_config(self) -> str:
+        data = self._read_config_json()
+        return str(data.get("deepseek_api_key", "")).strip()
+
     def _legacy_app_data_dirs(self) -> list[Path]:
         """
         Candidate legacy runtime data locations from older releases/names.
@@ -290,13 +303,9 @@ class Aemeath(QLabel):
                 continue
 
     def _load_config(self) -> None:
-        if not self._config_path.exists():
+        data = self._read_config_json()
+        if not data:
             return
-        try:
-            data = json.loads(self._config_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return
-        self._api_key = str(data.get("deepseek_api_key", "")).strip()
         reasoning_raw = data.get("reasoning_enabled", self._reasoning_enabled)
         if isinstance(reasoning_raw, bool):
             self._reasoning_enabled = reasoning_raw
@@ -317,19 +326,12 @@ class Aemeath(QLabel):
         except (TypeError, ValueError):
             pass
 
-    def _save_config(self) -> bool:
-        payload: dict[str, Any] = {}
-        try:
-            if self._config_path.exists():
-                raw = self._config_path.read_text(encoding="utf-8")
-                parsed = json.loads(raw)
-                if isinstance(parsed, dict):
-                    payload = dict(parsed)
-        except (OSError, json.JSONDecodeError):
-            payload = {}
+    def _save_config(self, *, api_key: str | None = None) -> bool:
+        payload = self._read_config_json()
+        final_api_key = self._read_api_key_from_config() if api_key is None else str(api_key).strip()
         payload.update(
             {
-                "deepseek_api_key": self._api_key,
+                "deepseek_api_key": final_api_key,
                 "reasoning_enabled": self._reasoning_enabled,
                 "min_jump_distance_px": self._min_jump_distance_px,
                 "flight_speed_px": self._flight_base_speed_px,
@@ -390,7 +392,7 @@ class Aemeath(QLabel):
 
     def _show_settings_dialog(self) -> None:
         dialog = SettingsDialog(
-            api_key=self._api_key,
+            api_key=self._read_api_key_from_config(),
             min_jump_distance=self._min_jump_distance_px,
             flight_speed=self._flight_base_speed_px,
             reasoning_enabled=self._reasoning_enabled,
@@ -400,16 +402,14 @@ class Aemeath(QLabel):
             parent=None,
         )
         result = dialog.exec()
-        # Persona file can be edited from quick actions while dialog is open.
-        self._persona_prompt = self._load_persona_prompt()
         if result != SettingsDialog.DialogCode.Accepted:
             return
-        self._api_key = dialog.api_key()
+        api_key = dialog.api_key()
         self._reasoning_enabled = dialog.reasoning_enabled()
         self._min_jump_distance_px = dialog.min_jump_distance()
         self._flight_base_speed_px = dialog.flight_speed()
         self._chat_context_turns = dialog.chat_context_turns()
-        if self._save_config():
+        if self._save_config(api_key=api_key):
             QMessageBox.information(self, "保存成功", "设置已保存，后续将自动读取。")
             return
         QMessageBox.warning(self, "保存失败", "无法写入配置文件，请检查目录权限。")
@@ -1028,11 +1028,11 @@ class Aemeath(QLabel):
         if not self._is_widget_alive(self._chat_window):
             self._chat_window = ChatWindow(
                 config_dir=self._config_path.parent,
-                api_key_getter=lambda: self._api_key,
+                api_key_getter=self._read_api_key_from_config,
                 reasoning_enabled_getter=lambda: self._reasoning_enabled,
                 context_turns_getter=lambda: self._chat_context_turns,
                 icon_path=self.resources_dir / "icon.webp",
-                persona_prompt=self._persona_prompt,
+                persona_prompt_getter=self._load_persona_prompt,
                 parent=None,
             )
         chat_window = self._chat_window

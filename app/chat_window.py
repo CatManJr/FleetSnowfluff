@@ -6,6 +6,7 @@ from difflib import SequenceMatcher
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
+from collections.abc import Callable
 
 from PySide6.QtCore import QEvent, QObject, QSize, Qt, QThread, Signal
 from PySide6.QtGui import QCloseEvent, QIcon, QImage, QPixmap
@@ -137,7 +138,7 @@ class ChatWindow(QDialog):
         reasoning_enabled_getter=None,
         context_turns_getter=None,
         icon_path: Path | None = None,
-        persona_prompt: str = "",
+        persona_prompt_getter: Callable[[], str] | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -146,6 +147,7 @@ class ChatWindow(QDialog):
         self._api_key_getter = api_key_getter
         self._reasoning_enabled_getter = reasoning_enabled_getter or (lambda: False)
         self._context_turns_getter = context_turns_getter or (lambda: 20)
+        self._persona_prompt_getter = persona_prompt_getter or (lambda: "")
         self._icon_path = icon_path
         self._resources_dir = icon_path.parent if icon_path is not None else config_dir.parent
         self._send_icon_path = None
@@ -156,8 +158,6 @@ class ChatWindow(QDialog):
                 if candidate.exists():
                     self._send_icon_path = candidate
                     break
-        self._persona_prompt = persona_prompt.strip()
-        self._persona_example_inputs = self._extract_persona_example_inputs(self._persona_prompt)
         self._records: list[dict[str, str]] = []
         self._thread: QThread | None = None
         self._worker: ChatWorker | None = None
@@ -703,7 +703,8 @@ class ChatWindow(QDialog):
             "Keep replies concise and warm."
         )
         messages: list[dict[str, str]] = []
-        if self._persona_prompt:
+        persona_prompt = (self._persona_prompt_getter() or "").strip()
+        if persona_prompt:
             # Two-layer system prompt improves role adherence under long contexts.
             messages.append(
                 {
@@ -720,7 +721,7 @@ class ChatWindow(QDialog):
                     "role": "system",
                     "content": (
                         "以下为结构化角色设定知识库（高优先级）：\n\n"
-                        f"{self._persona_prompt}"
+                        f"{persona_prompt}"
                     ),
                 }
             )
@@ -750,14 +751,16 @@ class ChatWindow(QDialog):
         Reduce randomness when the user prompt resembles persona examples.
         """
         base = 0.7
-        if not self._persona_example_inputs:
+        persona_prompt = (self._persona_prompt_getter() or "").strip()
+        persona_example_inputs = self._extract_persona_example_inputs(persona_prompt)
+        if not persona_example_inputs:
             return base
         normalized_prompt = prompt.strip()
         if not normalized_prompt:
             return base
 
         best_ratio = 0.0
-        for sample in self._persona_example_inputs:
+        for sample in persona_example_inputs:
             ratio = SequenceMatcher(None, normalized_prompt, sample).ratio()
             if sample in normalized_prompt or normalized_prompt in sample:
                 ratio = max(ratio, 0.92)
