@@ -59,6 +59,9 @@ uv run main.py
 ```
 
 > ⚠️ ：Qt6 在 MacOS 上会频繁出现环境漂移，常见睡一觉起来“qt.qpa.plugin: Could not find the Qt platform plugin "cocoa" in <Your ENV>” 这里给出一个简单粗暴的解决方法：
+```bash
+uv cache clean pyside6 pyside6-addons pyside6-essentials shiboken6 && rm -rf ".venv" && uv sync
+```
 
 
 ### 打包发布版
@@ -139,10 +142,6 @@ powershell -ExecutionPolicy Bypass -File .\windows-toolkit\release_windows.ps1 -
 
 >如需测试聊天功能，同样记得先准备 DeepSeek API Key，并在右键设置里填写。  
 > ⚠️ ：虽然我尽可能做了容器隔离和uv隔离，但开发环境仍建议您做好备份与隔离防止我的屎山污染您的本地路径。  
-
-```bash
-uv cache clean pyside6 pyside6-addons pyside6-essentials shiboken6 && rm -rf ".venv" && uv sync
-```
 
 ## 功能总览 🎮
 

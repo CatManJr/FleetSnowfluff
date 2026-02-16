@@ -11,6 +11,10 @@ from typing import Union, cast
 from PySide6.QtCore import QPoint, QSettings, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QColor, QIcon, QKeyEvent, QMouseEvent, QPainter, QPen, QPixmap, QPainterPath, QRegion
 from PySide6.QtMultimedia import QAudioDevice, QAudioOutput, QMediaPlayer, QMediaDevices, QVideoSink
+try:
+    from PySide6.QtMultimediaWidgets import QVideoWidget as _QVideoWidget
+except Exception:  # noqa: BLE001
+    _QVideoWidget = None
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -38,6 +42,8 @@ from PySide6.QtWidgets import (
 )
 
 from .ui_scale import current_app_scale, px
+
+HAS_QVIDEO_WIDGET = _QVideoWidget is not None
 
 
 class DrawCanvas(QWidget):
@@ -409,8 +415,9 @@ class WithYouWindow(QDialog):
         self._note_window: StickyNoteWindow | None = None
         self._phase = "idle"  # idle / answering / config / running / hangup
         self._loop_video = False
-        self._last_frame: QPixmap | None = None
+        self._active_video_widget: QWidget | None = None
         self._active_video_label: QLabel | None = None
+        self._last_frame: QPixmap | None = None
         self._total_rounds = 1
         self._current_round = 1
         self._round_seconds = 25 * 60
@@ -431,10 +438,14 @@ class WithYouWindow(QDialog):
         self._end_outro_playing = False
         self._cinematic_fill_mode = False
         self._current_media_source = ""
-        # Heavy 4K frame scaling in Python can block UI when multiple windows are open.
-        # Limit render frequency to keep the event loop responsive.
         self._last_frame_render_ts = 0.0
         self._frame_interval_s = 1.0 / 20.0
+        self._fallback_frame_interval_normal_s = 1.0 / 20.0
+        self._fallback_frame_interval_bgm_priority_s = 1.0 / 8.0
+        self._bgm_ducking_ratio = 0.35
+        self._background_audio_paused_for_voice = False
+        self._resume_ambient_after_voice = False
+        self._resume_bgm_after_voice = False
 
         self._answer_path = self._pick_media(("answering.mov", "answering.mp4", "answering.MOV", "answering.MP4"))
         self._hangup_path = self._pick_media(("hangup.mov", "hangup.mp4", "hangup.MOV", "hangup.MP4"))
@@ -502,8 +513,12 @@ class WithYouWindow(QDialog):
         self._cinematic_page = QFrame(self)
         cine_layout = QVBoxLayout(self._cinematic_page)
         cine_layout.setContentsMargins(0, 0, 0, 0)
-        self._cinematic_video = QLabel(self._cinematic_page)
-        self._cinematic_video.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if HAS_QVIDEO_WIDGET and _QVideoWidget is not None:
+            self._cinematic_video = _QVideoWidget(self._cinematic_page)
+            self._cinematic_video.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
+        else:
+            self._cinematic_video = QLabel(self._cinematic_page)
+            self._cinematic_video.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._cinematic_video.setStyleSheet("background:#000000;")
         cine_layout.addWidget(self._cinematic_video, 1)
         self._stack.addWidget(self._cinematic_page)
@@ -725,8 +740,12 @@ class WithYouWindow(QDialog):
         self._withyou_panel.setObjectName("withyouPanel")
         withyou_layout = QVBoxLayout(self._withyou_panel)
         withyou_layout.setContentsMargins(0, 0, 0, 0)
-        self._withyou_video = QLabel(self._withyou_panel)
-        self._withyou_video.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if HAS_QVIDEO_WIDGET and _QVideoWidget is not None:
+            self._withyou_video = _QVideoWidget(self._withyou_panel)
+            self._withyou_video.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatioByExpanding)
+        else:
+            self._withyou_video = QLabel(self._withyou_panel)
+            self._withyou_video.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._withyou_video.setStyleSheet("background: transparent; border-radius: 18px;")
         withyou_layout.addWidget(self._withyou_video, 1)
 
@@ -819,11 +838,20 @@ class WithYouWindow(QDialog):
         self._bgm_player.positionChanged.connect(self._on_bgm_position_changed)
         self._bgm_player.durationChanged.connect(self._on_bgm_duration_changed)
         self._bgm_player.mediaStatusChanged.connect(self._on_bgm_media_status_changed)
-        self._sink = QVideoSink(self)
-        self._sink.videoFrameChanged.connect(self._on_video_frame_changed)
-        self._player.setVideoOutput(self._sink)
+        self._sink: QVideoSink | None = None
+        if HAS_QVIDEO_WIDGET:
+            self._player.setVideoOutput(self._withyou_video)
+            self._active_video_widget = self._withyou_video
+        else:
+            sink = QVideoSink(self)
+            sink.videoFrameChanged.connect(self._on_video_frame_changed)
+            self._sink = sink
+            self._player.setVideoOutput(sink)
+            self._active_video_label = self._withyou_video
         self._player.mediaStatusChanged.connect(self._on_media_status_changed)
         self._player.errorOccurred.connect(self._on_media_error)
+        self._player.playbackStateChanged.connect(self._on_video_playback_state_changed)
+        self._refresh_video_priority_for_bgm()
 
         self._tick = QTimer(self)
         self._tick.setInterval(1000)
@@ -1196,6 +1224,7 @@ class WithYouWindow(QDialog):
                 self._bgm_player.setPosition(self._bgm_pending_seek_ms)
                 self._bgm_pending_seek_ms = 0
             self._bgm_player.play()
+            self._refresh_video_priority_for_bgm()
         elif status == QMediaPlayer.MediaStatus.EndOfMedia:
             # Guard against transient EndOfMedia events emitted during
             # stop/setSource switching, which can cause accidental next-track jumps.
@@ -1215,6 +1244,7 @@ class WithYouWindow(QDialog):
                     self._bgm_resume_position_ms = 0
                     self._bgm_player.setPosition(0)
                     self._bgm_player.play()
+            self._refresh_video_priority_for_bgm()
 
     def _bgm_play_index(self, index: int, *, start_position_ms: int = 0) -> None:
         if index < 0 or index >= len(self._bgm_playlist):
@@ -1224,7 +1254,7 @@ class WithYouWindow(QDialog):
             self._stop_bgm()
             return
         path = self._bgm_playlist[index]
-        self._bgm_audio.setVolume(self._bgm_volume_slider.value() / 100.0)
+        self._apply_bgm_ducking_volume()
         self._bgm_pending_seek_ms = max(0, start_position_ms)
         self._bgm_resume_position_ms = self._bgm_pending_seek_ms
         self._bgm_switching_source = True
@@ -1239,7 +1269,7 @@ class WithYouWindow(QDialog):
         self._ambient_player.setSource(QUrl())
 
     def _on_bgm_volume_changed(self, value: int) -> None:
-        self._bgm_audio.setVolume(value / 100.0)
+        self._apply_bgm_ducking_volume()
         self._with_you_settings.setValue("bgm/volume", value)
 
     def _on_bgm_enabled_changed(self, _state: int) -> None:
@@ -1315,6 +1345,43 @@ class WithYouWindow(QDialog):
         self._bgm_player.setSource(QUrl())
         self._bgm_seek_slider.setRange(0, 0)
         self._bgm_time_label.setText("0:00 / 0:00")
+        self._refresh_video_priority_for_bgm()
+
+    def _on_video_playback_state_changed(self, _state) -> None:
+        self._refresh_video_priority_for_bgm()
+
+    def _is_video_audio_active(self) -> bool:
+        return (
+            not self._player.source().isEmpty()
+            and self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+        )
+
+    def _apply_bgm_ducking_volume(self) -> None:
+        if not hasattr(self, "_bgm_volume_slider"):
+            return
+        base = max(0.0, min(1.0, self._bgm_volume_slider.value() / 100.0))
+        target = base
+        if self._is_video_audio_active():
+            target = base * self._bgm_ducking_ratio
+        self._bgm_audio.setVolume(max(0.0, min(1.0, target)))
+
+    def _refresh_video_priority_for_bgm(self) -> None:
+        if not hasattr(self, "_bgm_enabled_cb"):
+            self._player.setAudioOutput(self._audio)
+            self._audio.setVolume(1.0)
+            self._frame_interval_s = self._fallback_frame_interval_normal_s
+            return
+        self._player.setAudioOutput(self._audio)
+        self._audio.setVolume(1.0)
+        bgm_playing = (
+            self._bgm_enabled_cb.isChecked()
+            and self._bgm_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+        )
+        self._apply_bgm_ducking_volume()
+        if bgm_playing:
+            self._frame_interval_s = self._fallback_frame_interval_bgm_priority_s
+            return
+        self._frame_interval_s = self._fallback_frame_interval_normal_s
 
     @staticmethod
     def _focus_theme_tokens() -> dict[str, str]:
@@ -1614,7 +1681,14 @@ class WithYouWindow(QDialog):
             and self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
         ):
             return
+        if loop:
+            self._restore_background_audio_after_voice(resume=True)
+        else:
+            self._pause_background_audio_for_voice()
         self._loop_video = loop
+        if hasattr(self._player, "setLoops"):
+            loops = QMediaPlayer.Loops.Infinite if loop else 1
+            self._player.setLoops(loops)
         self._player.stop()
         # Force-detach previous stream before switching to new media.
         self._player.setSource(QUrl())
@@ -1624,20 +1698,56 @@ class WithYouWindow(QDialog):
 
     def _stop_all_playback(self) -> None:
         self._loop_video = False
+        if hasattr(self._player, "setLoops"):
+            self._player.setLoops(1)
         self._player.stop()
         self._player.setSource(QUrl())
         self._current_media_source = ""
         self._sfx_player.stop()
+        self._restore_background_audio_after_voice(resume=False)
         self._stop_ambient()
         self._stop_bgm()
 
     def _stop_transition_playback(self) -> None:
         """Stop only cinematic/video/sfx playback, keep ambient+BGM running."""
         self._loop_video = False
+        if hasattr(self._player, "setLoops"):
+            self._player.setLoops(1)
         self._player.stop()
         self._player.setSource(QUrl())
         self._current_media_source = ""
         self._sfx_player.stop()
+        self._restore_background_audio_after_voice(resume=True)
+
+    def _pause_background_audio_for_voice(self) -> None:
+        if self._background_audio_paused_for_voice:
+            return
+        self._background_audio_paused_for_voice = True
+        self._resume_ambient_after_voice = (
+            self._ambient_enabled_cb.isChecked()
+            and self._ambient_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+        )
+        self._resume_bgm_after_voice = (
+            self._bgm_enabled_cb.isChecked()
+            and self._bgm_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+        )
+        if self._resume_ambient_after_voice:
+            self._stop_ambient()
+        if self._resume_bgm_after_voice:
+            self._stop_bgm()
+
+    def _restore_background_audio_after_voice(self, *, resume: bool) -> None:
+        if not self._background_audio_paused_for_voice:
+            return
+        should_resume_ambient = resume and self._resume_ambient_after_voice and self._ambient_enabled_cb.isChecked()
+        should_resume_bgm = resume and self._resume_bgm_after_voice and self._bgm_enabled_cb.isChecked()
+        self._background_audio_paused_for_voice = False
+        self._resume_ambient_after_voice = False
+        self._resume_bgm_after_voice = False
+        if should_resume_ambient:
+            self._start_ambient()
+        if should_resume_bgm:
+            self._start_bgm()
 
     def _play_start_sfx(self) -> None:
         if self._start_sfx_path is None:
@@ -1657,7 +1767,7 @@ class WithYouWindow(QDialog):
         self._play_start_sfx()
         self._set_interactive_mode()
         self._middle_stack.setCurrentWidget(self._withyou_panel)
-        self._active_video_label = self._withyou_video
+        self._activate_withyou_video_output()
         if self._withyou_path is not None:
             self._play_media(self._withyou_path, loop=True)
 
@@ -1676,19 +1786,37 @@ class WithYouWindow(QDialog):
 
     def _set_cinematic_mode(self, *, fill: bool = False) -> None:
         self._stack.setCurrentWidget(self._cinematic_page)
-        self._active_video_label = self._cinematic_video
-        self._cinematic_video.setPixmap(QPixmap())
-        self._cinematic_fill_mode = fill
+        self._activate_cinematic_video_output(fill=fill)
 
     def _set_interactive_mode(self) -> None:
         self._stack.setCurrentWidget(self._interactive_page)
+
+    def _activate_cinematic_video_output(self, *, fill: bool) -> None:
+        self._cinematic_fill_mode = fill
+        if HAS_QVIDEO_WIDGET:
+            mode = Qt.AspectRatioMode.KeepAspectRatioByExpanding if fill else Qt.AspectRatioMode.KeepAspectRatio
+            self._cinematic_video.setAspectRatioMode(mode)
+            self._active_video_widget = self._cinematic_video
+            self._player.setVideoOutput(self._cinematic_video)
+            return
+        self._active_video_label = self._cinematic_video
+        self._cinematic_video.setPixmap(QPixmap())
+
+    def _activate_withyou_video_output(self) -> None:
         self._cinematic_fill_mode = False
+        if HAS_QVIDEO_WIDGET:
+            self._withyou_video.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatioByExpanding)
+            self._active_video_widget = self._withyou_video
+            self._player.setVideoOutput(self._withyou_video)
+            return
+        self._active_video_label = self._withyou_video
 
     def _enter_config(self, *, preserve_progress: bool = False) -> None:
         self._phase = "config"
         self._set_view_mode("config")
         self._set_interactive_mode()
         self._middle_stack.setCurrentWidget(self._settings_scroll)
+        self._active_video_widget = None
         self._active_video_label = None
         self._break_intro_playing = False
         self._start_intro_playing = False
@@ -1745,7 +1873,7 @@ class WithYouWindow(QDialog):
         self._set_view_mode("focus")
         self._set_interactive_mode()
         self._middle_stack.setCurrentWidget(self._withyou_panel)
-        self._active_video_label = self._withyou_video
+        self._activate_withyou_video_output()
         self._total_rounds = max(1, int(self.rounds_spin.value()))
         self._current_round = 1
         focus_total_seconds = int(self.focus_min_spin.value()) * 60 + int(self.focus_sec_spin.value())
@@ -1801,7 +1929,7 @@ class WithYouWindow(QDialog):
         self._set_view_mode("focus")
         self._set_interactive_mode()
         self._middle_stack.setCurrentWidget(self._withyou_panel)
-        self._active_video_label = self._withyou_video
+        self._activate_withyou_video_output()
         self.start_btn.setEnabled(False)
         self.rounds_spin.setEnabled(False)
         self.focus_min_spin.setEnabled(False)
@@ -1837,13 +1965,6 @@ class WithYouWindow(QDialog):
         self._update_mini_bar_state()
 
     def _start_hangup(self) -> None:
-        if self._phase == "config":
-            # In settings view, exit should return to chat immediately
-            # without playing hangup media.
-            self._tick.stop()
-            self._set_status_tray_visible(False)
-            self.close()
-            return
         self._tick.stop()
         self._stop_ambient()
         self._stop_bgm()
@@ -1952,6 +2073,8 @@ class WithYouWindow(QDialog):
         self._update_mini_bar_state()
 
     def _on_video_frame_changed(self, frame) -> None:
+        if HAS_QVIDEO_WIDGET:
+            return
         now = time.monotonic()
         if (now - self._last_frame_render_ts) < self._frame_interval_s:
             return
@@ -1968,6 +2091,8 @@ class WithYouWindow(QDialog):
         self._render_frame()
 
     def _render_frame(self) -> None:
+        if HAS_QVIDEO_WIDGET:
+            return
         if self._last_frame is None or self._last_frame.isNull() or self._active_video_label is None:
             return
         mode = Qt.AspectRatioMode.KeepAspectRatio
@@ -1986,44 +2111,53 @@ class WithYouWindow(QDialog):
         if status != QMediaPlayer.MediaStatus.EndOfMedia:
             return
         if self._loop_video and self._phase == "running":
-            self._player.setPosition(0)
-            self._player.play()
+            if not hasattr(self._player, "setLoops"):
+                self._player.setPosition(0)
+                self._player.play()
             return
         if self._break_intro_playing and self._phase == "running" and self._is_break_phase:
+            self._restore_background_audio_after_voice(resume=True)
             self._break_intro_playing = False
             self._set_interactive_mode()
             self._middle_stack.setCurrentWidget(self._withyou_panel)
-            self._active_video_label = self._withyou_video
+            self._activate_withyou_video_output()
             if self._withyou_path is not None:
                 self._play_media(self._withyou_path, loop=True)
             return
         if self._start_intro_playing and self._phase == "running" and not self._is_break_phase:
+            self._restore_background_audio_after_voice(resume=True)
             self._start_intro_playing = False
             self._set_interactive_mode()
             self._middle_stack.setCurrentWidget(self._withyou_panel)
-            self._active_video_label = self._withyou_video
+            self._activate_withyou_video_output()
             if self._withyou_path is not None:
                 self._play_media(self._withyou_path, loop=True)
             return
         if self._end_outro_playing:
+            self._restore_background_audio_after_voice(resume=True)
             self._end_outro_playing = False
             self._enter_config(preserve_progress=False)
             return
         if self._phase == "answering":
+            self._restore_background_audio_after_voice(resume=True)
             self._enter_config()
             return
         if self._phase == "hangup":
+            self._restore_background_audio_after_voice(resume=False)
             self.close()
 
     def _on_media_error(self, _err, _msg: str) -> None:
         if self._end_outro_playing:
+            self._restore_background_audio_after_voice(resume=True)
             self._end_outro_playing = False
             self._enter_config(preserve_progress=False)
             return
         if self._phase == "answering":
+            self._restore_background_audio_after_voice(resume=True)
             self._enter_config()
             return
         if self._phase == "hangup":
+            self._restore_background_audio_after_voice(resume=False)
             self.close()
 
     def _open_note_window(self) -> None:
@@ -2043,7 +2177,7 @@ class WithYouWindow(QDialog):
             self._start_intro_playing = False
             self._set_interactive_mode()
             self._middle_stack.setCurrentWidget(self._withyou_panel)
-            self._active_video_label = self._withyou_video
+            self._activate_withyou_video_output()
             if self._withyou_path is not None:
                 self._play_media(self._withyou_path, loop=True)
             return True
@@ -2052,7 +2186,7 @@ class WithYouWindow(QDialog):
             self._break_intro_playing = False
             self._set_interactive_mode()
             self._middle_stack.setCurrentWidget(self._withyou_panel)
-            self._active_video_label = self._withyou_video
+            self._activate_withyou_video_output()
             if self._withyou_path is not None:
                 self._play_media(self._withyou_path, loop=True)
             return True
