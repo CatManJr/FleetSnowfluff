@@ -18,9 +18,11 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
 )
@@ -139,6 +141,9 @@ class ChatWindow(QDialog):
         context_turns_getter=None,
         icon_path: Path | None = None,
         persona_prompt_getter: Callable[[], str] | None = None,
+        shared_tray_getter: Callable[[], QSystemTrayIcon | None] | None = None,
+        shared_tray_menu_getter: Callable[[], QMenu | None] | None = None,
+        shared_tray_tooltip_getter: Callable[[], str] | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -148,6 +153,9 @@ class ChatWindow(QDialog):
         self._reasoning_enabled_getter = reasoning_enabled_getter or (lambda: False)
         self._context_turns_getter = context_turns_getter or (lambda: 20)
         self._persona_prompt_getter = persona_prompt_getter or (lambda: "")
+        self._shared_tray_getter = shared_tray_getter or (lambda: None)
+        self._shared_tray_menu_getter = shared_tray_menu_getter or (lambda: None)
+        self._shared_tray_tooltip_getter = shared_tray_tooltip_getter or (lambda: "飞行雪绒：主控菜单")
         self._icon_path = icon_path
         self._resources_dir = icon_path.parent if icon_path is not None else config_dir.parent
         self._send_icon_path = None
@@ -1011,6 +1019,9 @@ class ChatWindow(QDialog):
             self._with_you_window = WithYouWindow(
                 resources_dir=self._resources_dir,
                 config_dir=self._config_dir,
+                shared_tray=self._shared_tray_getter(),
+                shared_tray_default_menu=self._shared_tray_menu_getter(),
+                shared_tray_default_tooltip=self._shared_tray_tooltip_getter(),
                 parent=None,
             )
             self._with_you_window.chatRequested.connect(self._show_chat_during_call)

@@ -1033,6 +1033,9 @@ class Aemeath(QLabel):
                 context_turns_getter=lambda: self._chat_context_turns,
                 icon_path=self.resources_dir / "icon.webp",
                 persona_prompt_getter=self._load_persona_prompt,
+                shared_tray_getter=lambda: self._tray_icon,
+                shared_tray_menu_getter=lambda: self._menu,
+                shared_tray_tooltip_getter=lambda: "飞行雪绒：主控菜单",
                 parent=None,
             )
         chat_window = self._chat_window

@@ -388,11 +388,23 @@ class WithYouWindow(QDialog):
     callEnded = Signal()
     chatRequested = Signal()
 
-    def __init__(self, resources_dir: Path, config_dir: Path | None = None, parent=None) -> None:
+    def __init__(
+        self,
+        resources_dir: Path,
+        config_dir: Path | None = None,
+        shared_tray: QSystemTrayIcon | None = None,
+        shared_tray_default_menu: QMenu | None = None,
+        shared_tray_default_tooltip: str | None = None,
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self._resources_dir = resources_dir
         self._config_dir = config_dir
         self._settings_json_path = (config_dir / "settings.json") if config_dir is not None else None
+        self._shared_tray = shared_tray
+        self._shared_tray_default_menu = shared_tray_default_menu
+        self._shared_tray_default_tooltip = shared_tray_default_tooltip or "飞行雪绒：主控菜单"
+        self._status_tray_active = False
         self._call_dir = resources_dir / "Call"
         self._note_window: StickyNoteWindow | None = None
         self._phase = "idle"  # idle / answering / config / running / hangup
@@ -2091,19 +2103,21 @@ class WithYouWindow(QDialog):
     def _ensure_status_tray(self) -> QSystemTrayIcon | None:
         if self._status_tray is not None:
             return self._status_tray
-        if not QSystemTrayIcon.isSystemTrayAvailable():
+        if self._shared_tray is not None:
+            tray = self._shared_tray
+        elif not QSystemTrayIcon.isSystemTrayAvailable():
             return None
+        else:
+            tray = QSystemTrayIcon(self)
+            tray.setToolTip("专注计时器（点击展开）")
 
-        tray = QSystemTrayIcon(self)
-        tray.setToolTip("专注计时器（点击展开）")
-
-        icon = self._load_icon(("icon.webp", "icon.png", "icon.PNG"))
-        if icon is None or icon.isNull():
-            root_icon = self._resources_dir / "icon.webp"
-            if root_icon.exists():
-                icon = QIcon(str(root_icon))
-        if icon is not None and not icon.isNull():
-            tray.setIcon(icon)
+            icon = self._load_icon(("icon.webp", "icon.png", "icon.PNG"))
+            if icon is None or icon.isNull():
+                root_icon = self._resources_dir / "icon.webp"
+                if root_icon.exists():
+                    icon = QIcon(str(root_icon))
+            if icon is not None and not icon.isNull():
+                tray.setIcon(icon)
 
         menu = QMenu()
         menu_font = menu.font()
@@ -2126,8 +2140,9 @@ class WithYouWindow(QDialog):
         menu.addAction(chat_action)
         menu.addSeparator()
         menu.addAction(hangup_action)
-        tray.setContextMenu(menu)
-        tray.activated.connect(self._on_status_tray_activated)
+        if self._shared_tray is None:
+            tray.setContextMenu(menu)
+            tray.activated.connect(self._on_status_tray_activated)
 
         self._status_tray = tray
         self._status_tray_menu = menu
@@ -2140,10 +2155,21 @@ class WithYouWindow(QDialog):
         if tray is None:
             return
         if visible:
+            self._status_tray_active = True
             self._update_status_tray_state()
-            tray.show()
+            if self._status_tray_menu is not None:
+                tray.setContextMenu(self._status_tray_menu)
+            tray.setToolTip(f"专注计时器：{self._current_stage_and_countdown()[0]} · {self._current_stage_and_countdown()[1]}")
+            if self._shared_tray is None:
+                tray.show()
         else:
-            tray.hide()
+            self._status_tray_active = False
+            if self._shared_tray is not None:
+                if self._shared_tray_default_menu is not None:
+                    tray.setContextMenu(self._shared_tray_default_menu)
+                tray.setToolTip(self._shared_tray_default_tooltip)
+            else:
+                tray.hide()
 
     def _on_status_tray_activated(self, reason) -> None:
         # Keep tray icon passive: no auto-expand on click.
@@ -2176,7 +2202,7 @@ class WithYouWindow(QDialog):
         line = f"{stage} · {countdown}"
         if self._status_tray_stage_action is not None:
             self._status_tray_stage_action.setText(f"当前环节：{line}")
-        if self._status_tray is not None:
+        if self._status_tray is not None and (self._shared_tray is None or self._status_tray_active):
             self._status_tray.setToolTip(f"专注计时器：{line}")
 
     def _request_chat_window(self) -> None:
@@ -2296,8 +2322,7 @@ class WithYouWindow(QDialog):
         self._call_active = False
         if self._mini_bar is not None and self._mini_bar.isVisible():
             self._mini_bar.close()
-        if self._status_tray is not None:
-            self._status_tray.hide()
+        self._set_status_tray_visible(False)
         if self._note_window is not None and self._note_window.isVisible():
             self._note_window.close()
         if self._noise_popup.isVisible():
