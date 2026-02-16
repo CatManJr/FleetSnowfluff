@@ -1732,9 +1732,10 @@ class WithYouWindow(QDialog):
             and self._bgm_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
         )
         if self._resume_ambient_after_voice:
-            self._stop_ambient()
+            self._ambient_player.pause()
         if self._resume_bgm_after_voice:
-            self._stop_bgm()
+            self._bgm_player.pause()
+        self._refresh_video_priority_for_bgm()
 
     def _restore_background_audio_after_voice(self, *, resume: bool) -> None:
         if not self._background_audio_paused_for_voice:
@@ -1745,9 +1746,10 @@ class WithYouWindow(QDialog):
         self._resume_ambient_after_voice = False
         self._resume_bgm_after_voice = False
         if should_resume_ambient:
-            self._start_ambient()
+            self._ambient_player.play()
         if should_resume_bgm:
-            self._start_bgm()
+            self._bgm_player.play()
+        self._refresh_video_priority_for_bgm()
 
     def _play_start_sfx(self) -> None:
         if self._start_sfx_path is None:
