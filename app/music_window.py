@@ -1076,7 +1076,7 @@ class MusicWindow(QDialog):
 
         avatar = QLabel("")
         avatar.setObjectName("avatarBadge")
-        avatar_size = px(56, scale)
+        avatar_size = px(64, scale)
         avatar.setFixedSize(avatar_size, avatar_size)
         self.avatar_badge = avatar
         self._refresh_avatar_pixmap(avatar_size)
@@ -1164,7 +1164,8 @@ class MusicWindow(QDialog):
         self.volume_popup.resize(px(54, scale), px(170, scale))
         self._sync_volume_ui(max(0, min(100, int(self._get_volume_percent_fn()))))
 
-        self.track_list = PlaylistTreeWidget(self._playlist_bg_path, panel)
+        # Keep playlist visuals stable in fullscreen: avoid image letterboxing/stretching.
+        self.track_list = PlaylistTreeWidget(None, panel)
         self.track_list.setObjectName("trackList")
         self.track_list.setColumnCount(3)
         self.track_list.setHeaderLabels(["歌名", "作者", "专辑"])
@@ -1224,36 +1225,42 @@ class MusicWindow(QDialog):
         root.addWidget(nav)
         root.addWidget(panel, 1)
 
-        self._track_list_background = "background: transparent;"
+        self._track_list_background = (
+            "background: qlineargradient("
+            "x1:0, y1:0, x2:1, y2:1,"
+            "stop:0 rgba(244, 249, 255, 0.78),"
+            "stop:1 rgba(231, 241, 253, 0.68)"
+            ");"
+        )
         self._main_stylesheet_template = """
             QDialog {
-                background: rgba(255, 247, 251, 0.78);
-                color: #2a1f2a;
+                background: rgba(245, 250, 255, 0.84);
+                color: #1f2e40;
             }
             QFrame#navBar {
-                background: rgba(255, 255, 255, 0.46);
-                border-bottom: 1px solid rgba(255, 211, 230, 0.36);
+                background: rgba(255, 255, 255, 0.62);
+                border-bottom: 1px solid rgba(197, 214, 235, 0.46);
             }
             QLabel#avatarBadge {
-                min-width: 56px;
-                min-height: 56px;
-                max-width: 56px;
-                max-height: 56px;
-                border-radius: 28px;
-                background: #ff5fa2;
+                min-width: 64px;
+                min-height: 64px;
+                max-width: 64px;
+                max-height: 64px;
+                border-radius: 32px;
+                background: transparent;
                 color: #ffffff;
                 font-weight: 700;
                 qproperty-alignment: AlignCenter;
-                border: 2px solid #ffc2de;
+                border: 1px solid rgba(196, 214, 236, 0.70);
             }
             QLabel#navTitle {
-                font-size: __FS18__px;
+                font-size: __FS20__px;
                 font-weight: 700;
                 color: #221626;
             }
             QLabel#followCount {
                 color: #8d365d;
-                font-size: __FS12__px;
+                font-size: __FS14__px;
                 font-weight: 700;
                 padding: 0 2px;
             }
@@ -1269,7 +1276,7 @@ class MusicWindow(QDialog):
                 min-width: __FOLLOW_W__px;
                 min-height: __FOLLOW_H__px;
                 padding: 0 10px;
-                font-size: __FS13__px;
+                font-size: __FS15__px;
                 font-weight: 700;
             }
             QPushButton#followBtn:hover {
@@ -1312,20 +1319,20 @@ class MusicWindow(QDialog):
                 background: rgba(255, 211, 233, 0.38);
             }
             QFrame#panelCard {
-                background: rgba(255, 247, 251, 0.34);
-                border: none;
+                background: rgba(251, 254, 255, 0.58);
+                border: 1px solid rgba(198, 217, 239, 0.52);
                 border-radius: 16px;
             }
             QLabel#nowPlaying {
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
-                    stop:0 rgba(255, 238, 247, 0.62),
-                    stop:1 rgba(255, 220, 237, 0.52)
+                    stop:0 rgba(252, 247, 255, 0.84),
+                    stop:1 rgba(234, 244, 255, 0.76)
                 );
-                border: none;
+                border: 1px solid rgba(203, 221, 243, 0.56);
                 border-radius: 12px;
                 padding: 8px;
-                color: #6c2e4e;
+                color: #2b3d53;
                 font-size: __FS13__px;
             }
             QLabel#timeLabel {
@@ -1421,11 +1428,11 @@ class MusicWindow(QDialog):
             }
             QTreeWidget#trackList {
                 __TRACK_LIST_BACKGROUND__
-                border: none;
+                border: 1px solid rgba(196, 215, 238, 0.64);
                 border-radius: 14px;
                 padding: 4px;
                 font-size: __FS14__px;
-                color: #2a1f2a;
+                color: #1f2e40;
             }
             QTreeWidget#trackList::item {
                 height: 28px;
@@ -1434,15 +1441,15 @@ class MusicWindow(QDialog):
                 margin: 1px 2px;
             }
             QTreeWidget#trackList::item:selected {
-                background: rgba(255, 234, 244, 0.35);
-                color: #6c2e4e;
+                background: rgba(222, 236, 252, 0.68);
+                color: #224263;
             }
             QHeaderView::section {
-                background: rgba(255, 240, 247, 0.58);
+                background: rgba(238, 246, 255, 0.86);
                 border: none;
-                border-bottom: 1px solid rgba(255, 211, 230, 0.34);
+                border-bottom: 1px solid rgba(196, 214, 235, 0.54);
                 padding: 6px 8px;
-                color: #8d365d;
+                color: #3b5878;
                 font-size: __FS12__px;
                 font-weight: 700;
             }
@@ -1532,13 +1539,14 @@ class MusicWindow(QDialog):
             .replace("__FS12__", str(px(12, scale)))
             .replace("__FS13__", str(px(13, scale)))
             .replace("__FS14__", str(px(14, scale)))
+            .replace("__FS15__", str(px(15, scale)))
             .replace("__FS16__", str(px(16, scale)))
             .replace("__FS18__", str(px(18, scale)))
             .replace("__FS20__", str(px(20, scale)))
             .replace("__FS21__", str(px(21, scale)))
             .replace("__FS34__", str(px(34, scale)))
-            .replace("__FOLLOW_W__", str(px(56, scale)))
-            .replace("__FOLLOW_H__", str(px(32, scale)))
+            .replace("__FOLLOW_W__", str(px(64, scale)))
+            .replace("__FOLLOW_H__", str(px(36, scale)))
             .replace("__NAVBTN_W__", str(px(56, scale)))
             .replace("__NAVBTN_H__", str(px(96, scale)))
             .replace("__TIME_W__", str(px(44, scale)))
@@ -1557,6 +1565,7 @@ class MusicWindow(QDialog):
         self.play_button.setFixedSize(main_btn, main_btn)
 
     def _refresh_avatar_pixmap(self, avatar_size: int) -> None:
+        self.avatar_badge.clearMask()
         if self._icon_path is not None and self._icon_path.exists():
             pixmap = QPixmap(str(self._icon_path))
             if not pixmap.isNull():
@@ -1575,7 +1584,7 @@ class MusicWindow(QDialog):
 
     def _apply_scaled_ui(self) -> None:
         scale = self._ui_scale()
-        avatar_size = px(56, scale)
+        avatar_size = px(64, scale)
         self.avatar_badge.setFixedSize(avatar_size, avatar_size)
         self._refresh_avatar_pixmap(avatar_size)
         self.now_playing.setMinimumHeight(px(96, scale))

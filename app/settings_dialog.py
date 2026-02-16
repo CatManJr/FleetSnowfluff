@@ -8,14 +8,16 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
+    QFrame,
     QFormLayout,
     QHBoxLayout,
+    QLabel,
+    QLayout,
     QLineEdit,
     QSpinBox,
     QVBoxLayout,
 )
 
-from .design_tokens import brand_palette
 from .fluent_compat import FPushButton as QPushButton
 from .fluent_compat import init_fluent_theme
 from .ui_scale import current_app_scale, px
@@ -37,7 +39,7 @@ class SettingsDialog(QDialog):
         init_fluent_theme()
         self.setWindowTitle("Fleet Snowfluff 设置")
         self.setModal(True)
-        self.resize(460, 250)
+        self.resize(520, 420)
 
         self.api_key_input = QLineEdit(self)
         self.api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
@@ -65,15 +67,6 @@ class SettingsDialog(QDialog):
         self.chat_context_turns_input.setSuffix(" 组")
         self.chat_context_turns_input.setValue(max(0, int(chat_context_turns)))
 
-        form = QFormLayout()
-        form.setHorizontalSpacing(10)
-        form.setVerticalSpacing(8)
-        form.addRow("DeepSeek API Key", self.api_key_input)
-        form.addRow("最短跳跃距离", self.min_jump_distance_input)
-        form.addRow("飞行速度", self.flight_speed_input)
-        form.addRow("聊天模型", self.reasoning_enabled_input)
-        form.addRow("聊天上下文长度", self.chat_context_turns_input)
-
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -95,119 +88,147 @@ class SettingsDialog(QDialog):
         for btn in (open_history_btn, open_persona_btn):
             btn.setMinimumHeight(32)
 
+        api_form = QFormLayout()
+        api_form.setHorizontalSpacing(10)
+        api_form.setVerticalSpacing(8)
+        api_form.addRow("DeepSeek API Key", self.api_key_input)
+
+        motion_form = QFormLayout()
+        motion_form.setHorizontalSpacing(10)
+        motion_form.setVerticalSpacing(8)
+        motion_form.addRow("最短跳跃距离", self.min_jump_distance_input)
+        motion_form.addRow("飞行速度", self.flight_speed_input)
+
+        chat_form = QFormLayout()
+        chat_form.setHorizontalSpacing(10)
+        chat_form.setVerticalSpacing(8)
+        chat_form.addRow("聊天模型", self.reasoning_enabled_input)
+        chat_form.addRow("聊天上下文长度", self.chat_context_turns_input)
+
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 10, 12, 10)
+        root.setContentsMargins(14, 12, 14, 12)
         root.setSpacing(10)
-        root.addLayout(form)
-        root.addLayout(quick_actions)
+        root.addWidget(self._make_settings_card("API 与连接", api_form))
+        root.addWidget(self._make_settings_card("动作参数", motion_form))
+        root.addWidget(self._make_settings_card("聊天行为", chat_form))
+        root.addWidget(self._make_settings_card("快捷动作", quick_actions))
+        root.addStretch(1)
         root.addWidget(buttons)
         self._apply_scaled_styles()
+
+    def _make_settings_card(self, title: str, body_layout: QLayout) -> QFrame:
+        card = QFrame(self)
+        card.setObjectName("settingsCard")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
+        title_label = QLabel(title, card)
+        title_label.setObjectName("settingsCardTitle")
+        layout.addWidget(title_label)
+        layout.addLayout(body_layout)
+        return card
 
     def _apply_scaled_styles(self) -> None:
         app = QApplication.instance()
         scale = current_app_scale(app) if app is not None else 1.0
         fs = px(15, scale)
         button_h = px(34, scale)
-        p = brand_palette()
         self.setStyleSheet(
-            """
-            QDialog {
-                background: %s;
-                color: %s;
-            }
-            QLabel {
-                color: %s;
-                font-size: %dpx;
-            }
-            QLineEdit, QSpinBox {
-                background: %s;
-                border: 2px solid %s;
-                border-radius: 10px;
-                padding: 4px 8px;
-                min-height: 30px;
-                font-size: %dpx;
-                color: %s;
-            }
-            QLineEdit::placeholder {
-                color: %s;
-            }
-            QCheckBox {
-                color: %s;
-                font-size: %dpx;
-            }
-            QDialogButtonBox QPushButton {
+            f"""
+            QDialog {{
+                background: rgba(248, 252, 255, 0.95);
+                color: #233246;
+            }}
+            QFrame#settingsCard {{
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
-                    stop:0 %s,
-                    stop:1 %s
+                    stop:0 rgba(247, 252, 255, 0.88),
+                    stop:1 rgba(236, 246, 255, 0.78)
                 );
-                border: 1px solid %s;
-                border-radius: 10px;
-                color: %s;
-                min-height: %dpx;
-                padding: 4px 12px;
-                font-size: %dpx;
-            }
-            QDialogButtonBox QPushButton:hover {
-                border-color: %s;
-                background: %s;
-            }
-            QPushButton#quickActionBtn {
+                border: 1px solid rgba(188, 208, 230, 0.84);
+                border-radius: 14px;
+            }}
+            QLabel#settingsCardTitle {{
+                color: #2d4160;
+                font-size: {fs}px;
+                font-weight: 700;
+                padding-bottom: 2px;
+            }}
+            QLabel {{
+                color: #2b3b50;
+                font-size: {fs}px;
+            }}
+            QLineEdit, QSpinBox {{
+                background: rgba(255, 255, 255, 0.94);
+                border: 1px solid rgba(190, 207, 226, 0.92);
+                border-radius: 12px;
+                padding: 5px 10px;
+                min-height: 32px;
+                font-size: {fs}px;
+                color: #203144;
+                selection-background-color: rgba(182, 208, 236, 0.75);
+            }}
+            QLineEdit:focus, QSpinBox:focus {{
+                border: 2px solid rgba(160, 193, 228, 0.92);
+                background: rgba(251, 254, 255, 0.98);
+            }}
+            QLineEdit::placeholder {{
+                color: #8c9aae;
+            }}
+            QCheckBox {{
+                color: #314258;
+                font-size: {fs}px;
+                spacing: 6px;
+            }}
+            QDialogButtonBox QPushButton {{
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
-                    stop:0 %s,
-                    stop:1 %s
+                    stop:0 rgba(244, 233, 255, 0.90),
+                    stop:1 rgba(216, 235, 255, 0.86)
                 );
-                border: 1px solid %s;
-                border-radius: 10px;
-                color: %s;
-                min-height: %dpx;
+                border: 1px solid rgba(176, 201, 229, 0.95);
+                border-radius: 12px;
+                color: #24384d;
+                min-height: {button_h}px;
+                padding: 4px 14px;
+                font-size: {fs}px;
+                font-weight: 700;
+            }}
+            QDialogButtonBox QPushButton:hover {{
+                border-color: rgba(157, 187, 221, 0.98);
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(250, 244, 255, 0.94),
+                    stop:1 rgba(226, 240, 255, 0.90)
+                );
+            }}
+            QDialogButtonBox QPushButton:pressed {{
+                background: rgba(215, 231, 248, 0.90);
+            }}
+            QPushButton#quickActionBtn {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(250, 244, 255, 0.90),
+                    stop:1 rgba(230, 241, 255, 0.86)
+                );
+                border: 1px solid rgba(182, 205, 232, 0.92);
+                border-radius: 12px;
+                color: #2b3f55;
+                min-height: {button_h}px;
                 padding: 4px 10px;
-                font-size: %dpx;
+                font-size: {fs}px;
                 font-weight: 600;
-            }
-            QPushButton#quickActionBtn:hover {
-                border-color: %s;
-                background: %s;
-            }
-            QPushButton#quickActionBtn:disabled {
-                color: %s;
-                border-color: %s;
-                background: %s;
-            }
+            }}
+            QPushButton#quickActionBtn:hover {{
+                border-color: rgba(163, 191, 222, 0.96);
+                background: rgba(237, 246, 255, 0.92);
+            }}
+            QPushButton#quickActionBtn:disabled {{
+                color: #8f9db0;
+                border-color: rgba(200, 210, 222, 0.72);
+                background: rgba(244, 247, 250, 0.88);
+            }}
             """
-            % (
-                p["white_soft"],
-                p["ink_900"],
-                p["ink_900"],
-                fs,
-                p["pink_50"],
-                p["pink_300"],
-                fs,
-                p["ink_900"],
-                p["pink_500"],
-                p["pink_500"],
-                fs,
-                p["pink_50"],
-                p["pink_100"],
-                p["pink_300"],
-                p["pink_500"],
-                button_h,
-                fs,
-                p["pink_400"],
-                p["pink_100"],
-                p["pink_50"],
-                p["pink_100"],
-                p["pink_300"],
-                p["pink_500"],
-                button_h,
-                fs,
-                p["pink_400"],
-                p["pink_100"],
-                p["pink_300"],
-                p["pink_200"],
-                p["white"],
-            )
         )
 
     def event(self, event) -> bool:

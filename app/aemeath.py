@@ -768,7 +768,7 @@ class Aemeath(QLabel):
         self._focus_menu = self._menu.addMenu("浮游星海")
         self._seal_action = self._focus_menu.addAction("")
         self._tray_focus_action = self._focus_menu.addAction("")
-        self._exit_action = self._menu.addAction("拜拜～")
+        self._exit_action = self._menu.addAction("晚安")
 
         self._chat_action.triggered.connect(self._chat_with_xiaoai)
         self._transform_action.triggered.connect(self._transform_emis)

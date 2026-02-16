@@ -595,7 +595,7 @@ class MiniCallBar(QDialog):
         return f"""
             QFrame#miniPanel {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {t["mini_panel_a"]}, stop:1 {t["mini_panel_b"]});
-                border: 1px solid {t["mini_panel_border"]};
+                border: none;
                 border-radius: 20px;
             }}
             QLabel#miniStatus, QLabel#miniTimer, QPushButton {{
@@ -804,7 +804,7 @@ class WithYouWindow(QDialog):
         self._bgm_pending_seek_ms = 0
         self._bgm_switching_source = False
 
-        self.setWindowTitle("专注通话")
+        self.setWindowTitle("通话中")
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.Tool)
         self.setObjectName("withYouWindow")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)

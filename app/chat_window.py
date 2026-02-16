@@ -9,7 +9,7 @@ from typing import Any, cast
 from collections.abc import Callable
 
 from PySide6.QtCore import QEvent, QObject, QSize, Qt, QThread, Signal
-from PySide6.QtGui import QCloseEvent, QIcon, QImage, QPixmap
+from PySide6.QtGui import QCloseEvent, QFontMetrics, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -27,7 +27,6 @@ from PySide6.QtWidgets import (
 )
 
 from .design_tokens import chat_theme_tokens
-from .fluent_compat import apply_icon_button_layout
 from .fluent_compat import FPushButton as QPushButton
 from .fluent_compat import fluent_icon
 from .fluent_compat import init_fluent_theme
@@ -310,7 +309,8 @@ class ChatWindow(QDialog):
         input_layout.setContentsMargins(10, 8, 10, 8)
         input_layout.setSpacing(8)
         input_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        row_height = px(52, scale)
+        row_height = px(56, scale)
+        send_btn_w = px(44, scale)
 
         self.input_box = ChatInputBox(input_frame)
         self.input_box.setPlaceholderText("输入...（暂只支持文本）")
@@ -321,29 +321,26 @@ class ChatWindow(QDialog):
 
         self.send_button = QPushButton(input_frame)
         self.send_button.setObjectName("sendButton")
-        self.send_button.setMinimumSize(row_height, row_height)
-        self.send_button.setMaximumSize(row_height, row_height)
+        self.send_button.setMinimumSize(send_btn_w, row_height)
+        self.send_button.setMaximumSize(send_btn_w, row_height)
         self.send_button.setToolTip("发送")
-        send_icon_size = px(24, scale)
         if self._send_icon_path is not None and self._send_icon_path.exists():
             send_icon = self._load_send_icon(self._send_icon_path)
             if send_icon is not None:
                 self.send_button.setIcon(send_icon)
-                apply_icon_button_layout(self.send_button, icon_size=send_icon_size, edge_padding=24, min_edge=row_height)
             else:
                 fluent = fluent_icon("AIRPLANE", "SEND")
                 if fluent is not None:
                     self.send_button.setIcon(fluent)
-                    apply_icon_button_layout(self.send_button, icon_size=send_icon_size, edge_padding=24, min_edge=row_height)
                 else:
                     self.send_button.setText("✈")
         else:
             fluent = fluent_icon("AIRPLANE", "SEND")
             if fluent is not None:
                 self.send_button.setIcon(fluent)
-                apply_icon_button_layout(self.send_button, icon_size=send_icon_size, edge_padding=24, min_edge=row_height)
             else:
                 self.send_button.setText("✈")
+        self._sync_send_icon_size()
         self.send_button.clicked.connect(self._send_message)
 
         input_layout.addWidget(self.input_box, 1, Qt.AlignmentFlag.AlignVCenter)
@@ -354,10 +351,12 @@ class ChatWindow(QDialog):
         root.addWidget(input_frame)
 
         self._apply_scaled_stylesheet(scale)
+        self._sync_nav_subtitle_width()
 
     def _apply_scaled_stylesheet(self, scale: float | None = None) -> None:
         scale = self._ui_scale() if scale is None else scale
-        btn = px(52, scale)
+        btn_h = px(40, scale)
+        btn_w = px(28, scale)
         t = self._chat_theme_tokens()
         self.setStyleSheet(
             f"""
@@ -369,8 +368,8 @@ class ChatWindow(QDialog):
                 font-family: {t["font_family"]};
             }}
             QFrame#navBar {{
-                background: {t["panel"]};
-                border-bottom: 1px solid {t["panel_border"]};
+                background: rgba(250, 252, 255, 0.86);
+                border-bottom: 1px solid rgba(214, 224, 236, 0.70);
             }}
             QLabel#avatarBadge {{
                 min-width: 42px;
@@ -403,70 +402,74 @@ class ChatWindow(QDialog):
                 color: {t["text_muted"]};
             }}
             QPushButton#navActionButton {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {t["accent_top"]}, stop:1 {t["accent_bottom"]});
-                border: 1px solid {t["accent_border"]};
-                border-bottom: 2px solid {t["accent_border_pressed"]};
-                border-radius: 10px;
-                color: #111111;
-                padding: 5px 9px;
-                font-size: {px(15, scale)}px;
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(248, 250, 253, 0.96),
+                    stop:1 rgba(239, 245, 252, 0.92)
+                );
+                border: 1px solid rgba(196, 210, 226, 0.86);
+                border-bottom: 1px solid rgba(184, 200, 218, 0.90);
+                border-radius: 12px;
+                color: #2a3848;
+                padding: 5px 10px;
+                font-size: {px(14, scale)}px;
                 font-weight: 700;
             }}
             QPushButton#navActionButton:hover {{
                 background: qlineargradient(
-                    x1:0, y1:0, x2:0, y2:1,
-                    stop:0 {t["accent_hover_top"]},
-                    stop:1 {t["accent_hover_bottom"]}
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(251, 253, 255, 0.98),
+                    stop:1 rgba(243, 248, 253, 0.95)
                 );
             }}
             QPushButton#navActionButton:pressed {{
-                border-bottom: 1px solid {t["accent_border_pressed"]};
-                padding-top: 6px;
-                padding-bottom: 4px;
+                background: rgba(236, 244, 252, 0.90);
+                border-color: rgba(180, 198, 219, 0.92);
             }}
             QFrame#panelCard {{
-                background: {t["panel_soft"]};
-                border: none;
+                background: rgba(250, 252, 254, 0.90);
+                border: 1px solid rgba(217, 226, 238, 0.78);
+                border-radius: 16px;
             }}
             QListWidget#chatTimeline {{
-                background: {t["timeline_bg"]};
-                border: 1px solid {t["panel_border"]};
-                border-radius: 14px;
+                background: rgba(253, 254, 255, 0.84);
+                border: 1px solid rgba(206, 219, 236, 0.78);
+                border-radius: 16px;
                 color: {t["text_primary"]};
                 outline: none;
             }}
             QListWidget#chatTimeline:focus {{
-                border: 1px solid {t["accent_border"]};
+                border: 1px solid rgba(163, 191, 223, 0.90);
             }}
             QFrame#composerBar {{
-                background: {t["panel"]};
-                border-top: 1px solid {t["panel_border"]};
+                background: rgba(252, 254, 255, 0.88);
+                border-top: 1px solid rgba(211, 223, 238, 0.74);
             }}
             QPlainTextEdit#composerInput {{
-                background: #ffffff;
-                border: 1px solid {t["panel_border"]};
-                border-radius: 16px;
-                padding: 8px;
+                background: rgba(253, 254, 255, 0.94);
+                border: 1px solid rgba(199, 213, 232, 0.84);
+                border-radius: 18px;
+                padding: 8px 10px;
                 color: {t["text_primary"]};
                 font-size: {px(16, scale)}px;
             }}
             QPlainTextEdit#composerInput:focus {{
-                border: 2px solid {t["send_top"]};
-                background: #fff9fc;
+                border: 2px solid rgba(171, 198, 228, 0.88);
+                background: rgba(250, 253, 255, 0.96);
             }}
             QPushButton#sendButton {{
-                min-width: {btn}px;
-                max-width: {btn}px;
-                min-height: {btn}px;
-                max-height: {btn}px;
+                min-width: {btn_w}px;
+                max-width: {btn_w}px;
+                min-height: {btn_h}px;
+                max-height: {btn_h}px;
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
-                    stop:0 {t["send_top"]},
-                    stop:1 {t["send_bottom"]}
+                    stop:0 rgba(248, 185, 220, 0.90),
+                    stop:1 rgba(167, 210, 245, 0.88)
                 );
-                border: 1px solid {t["send_border"]};
+                border: 1px solid rgba(178, 198, 224, 0.88);
                 border-radius: 16px;
-                color: #111111;
+                color: #2a3848;
                 font-weight: 600;
                 font-size: {px(20, scale)}px;
                 padding: 0px;
@@ -476,8 +479,8 @@ class ChatWindow(QDialog):
             QPushButton#sendButton:hover {{
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
-                    stop:0 {t["send_hover_top"]},
-                    stop:1 {t["send_hover_bottom"]}
+                    stop:0 rgba(250, 194, 224, 0.94),
+                    stop:1 rgba(181, 218, 247, 0.92)
                 );
             }}
             QPushButton#sendButton:pressed {{
@@ -497,16 +500,18 @@ class ChatWindow(QDialog):
         item = QListWidgetItem(self.chat_list)
         wrapper = QWidget()
         row = QHBoxLayout(wrapper)
-        row.setContentsMargins(6, 6, 6, 6)
+        row.setContentsMargins(8, 7, 8, 7)
         row.setSpacing(0)
 
         side = QWidget(wrapper)
         side_layout = QVBoxLayout(side)
         side_layout.setContentsMargins(0, 0, 0, 0)
-        side_layout.setSpacing(4)
+        side_layout.setSpacing(5)
 
         time_label = QLabel(ts, side)
-        time_label.setStyleSheet(f"color:{t['timestamp']}; font-size:{self._px(11)}px;")
+        time_label.setStyleSheet(
+            f"color:{t['timestamp']}; font-size:{self._px(11)}px; letter-spacing:0.3px; padding:0 2px;"
+        )
         if role == "user":
             time_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         else:
@@ -515,15 +520,15 @@ class ChatWindow(QDialog):
 
         bubble = QFrame(side)
         bubble_layout = QVBoxLayout(bubble)
-        bubble_layout.setContentsMargins(12, 10, 12, 10)
+        bubble_layout.setContentsMargins(13, 11, 13, 11)
         bubble_layout.setSpacing(4)
-        bubble.setMaximumWidth(self._px(300))
+        bubble.setMaximumWidth(self._px(324))
 
         body = QLabel(text, bubble)
         body.setWordWrap(True)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         body.setStyleSheet(
-            f"font-size: {self._px(14)}px; "
+            f"font-size: {self._px(14)}px; color: #26374a; "
             "background: transparent; border: none; margin: 0; padding: 0;"
         )
 
@@ -532,12 +537,12 @@ class ChatWindow(QDialog):
                 f"""
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
-                    stop:0 {t["timeline_item_user_top"]},
-                    stop:1 {t["timeline_item_user_bottom"]}
+                    stop:0 rgba(249, 229, 242, 0.96),
+                    stop:1 rgba(229, 240, 255, 0.93)
                 );
-                border: 1px solid {t["timeline_item_user_border"]};
-                border-radius: 12px;
-                color: #1b2530;
+                border: 1px solid rgba(186, 206, 228, 0.92);
+                border-radius: 14px;
+                color: #243548;
                 """
             )
             row.addStretch(1)
@@ -548,12 +553,12 @@ class ChatWindow(QDialog):
                 f"""
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
-                    stop:0 {t["timeline_item_assistant_top"]},
-                    stop:1 {t["timeline_item_assistant_bottom"]}
+                    stop:0 rgba(255, 255, 255, 0.98),
+                    stop:1 rgba(242, 249, 255, 0.94)
                 );
-                border: 1px solid {t["timeline_item_assistant_border"]};
-                border-radius:12px;
-                color:#1f2a36;
+                border: 1px solid rgba(195, 214, 236, 0.86);
+                border-radius: 14px;
+                color: #223446;
                 """
             )
             side_layout.addWidget(bubble)
@@ -1038,6 +1043,27 @@ class ChatWindow(QDialog):
     def _set_call_status(self, in_call: bool) -> None:
         if hasattr(self, "_nav_subtitle"):
             self._nav_subtitle.setText("通话中" if in_call else "在线")
+            self._sync_nav_subtitle_width()
+
+    def _sync_nav_subtitle_width(self) -> None:
+        if not hasattr(self, "_nav_subtitle"):
+            return
+        metrics = QFontMetrics(self._nav_subtitle.font())
+        fixed_w = max(metrics.horizontalAdvance("在线"), metrics.horizontalAdvance("通话中")) + self._px(6)
+        self._nav_subtitle.setMinimumWidth(fixed_w)
+        self._nav_subtitle.setMaximumWidth(fixed_w)
+
+    def _sync_send_icon_size(self) -> None:
+        if not hasattr(self, "send_button"):
+            return
+        if self.send_button.icon().isNull():
+            return
+        edge = min(self.send_button.width(), self.send_button.height())
+        if edge <= 0:
+            return
+        # Intentionally exceed button edge a bit, clipped by button bounds.
+        icon_edge = max(16, int(edge * 1.08))
+        self.send_button.setIconSize(QSize(icon_edge, icon_edge))
 
     def _on_call_started(self) -> None:
         self._set_call_status(True)
@@ -1059,16 +1085,17 @@ class ChatWindow(QDialog):
 
     def _refresh_scaled_ui(self) -> None:
         scale = self._ui_scale()
-        row_height = px(52, scale)
+        row_height = px(56, scale)
+        send_btn_w = px(44, scale)
         if hasattr(self, "input_box"):
             self.input_box.setMinimumHeight(row_height)
             self.input_box.setMaximumHeight(row_height)
         if hasattr(self, "send_button"):
-            self.send_button.setMinimumSize(row_height, row_height)
-            self.send_button.setMaximumSize(row_height, row_height)
-            if not self.send_button.icon().isNull():
-                self.send_button.setIconSize(QSize(row_height, row_height))
+            self.send_button.setMinimumSize(send_btn_w, row_height)
+            self.send_button.setMaximumSize(send_btn_w, row_height)
+            self._sync_send_icon_size()
         self._apply_scaled_stylesheet(scale)
+        self._sync_nav_subtitle_width()
 
     def event(self, event) -> bool:
         if event.type() == QEvent.Type.ScreenChangeInternal:
