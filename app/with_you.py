@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import random
 import sys
 import time
@@ -9,7 +10,7 @@ from pathlib import Path
 from typing import Union, cast
 
 from PySide6.QtCore import QPoint, QSettings, QSize, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QColor, QIcon, QKeyEvent, QMouseEvent, QPainter, QPen, QPixmap, QPainterPath, QRegion
+from PySide6.QtGui import QAction, QCloseEvent, QColor, QIcon, QKeyEvent, QLinearGradient, QMouseEvent, QPainter, QPen, QPixmap, QPainterPath, QRegion
 from PySide6.QtMultimedia import QAudioDevice, QAudioOutput, QMediaPlayer, QMediaDevices, QVideoSink
 try:
     from PySide6.QtMultimediaWidgets import QVideoWidget as _QVideoWidget
@@ -98,6 +99,298 @@ class DrawCanvas(QWidget):
                 continue
             for i in range(1, len(stroke)):
                 painter.drawLine(stroke[i - 1], stroke[i])
+
+
+class Aurora(QWidget):
+    """Pink aurora bands with irregular cadence + white star glints."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAutoFillBackground(False)
+        self._phase = 0.0
+        self._flow_speed = 0.020
+        self._drift_speed = 0.008
+        self._aurora_current = self._make_aurora_state()
+        self._aurora_target = self._make_aurora_state()
+        self._target_hold_frames = 0
+        self._star_count = 72
+        self._stars: list[dict[str, float]] = []
+        self._timer = QTimer(self)
+        self._timer.setInterval(33)
+        self._timer.timeout.connect(self._on_tick)
+        self._timer.start()
+
+    @staticmethod
+    def _make_aurora_state() -> dict[str, float]:
+        return {
+            # Upper-edge anchor in sky region.
+            "left": random.uniform(0.00, 0.20),
+            "right": random.uniform(0.00, 0.24),
+            # Ribbon width and motion parameters.
+            "width": random.uniform(0.30, 1.00),
+            "amp": random.uniform(0.050, 0.125),
+            "freq": random.uniform(0.60, 1.20),
+            "shift": random.uniform(0.0, math.pi * 2.0),
+            "alpha": random.uniform(126.0, 196.0),
+        }
+
+    def set_animating(self, enabled: bool) -> None:
+        if enabled:
+            if not self._timer.isActive():
+                self._timer.start()
+            return
+        self._timer.stop()
+
+    def _on_tick(self) -> None:
+        self._phase += 1.0
+        self._target_hold_frames -= 1
+        if self._target_hold_frames <= 0:
+            self._aurora_target = self._make_aurora_state()
+            self._target_hold_frames = random.randint(110, 220)
+        # Smoothly chase the next wind state.
+        follow = 0.016
+        for k, v in self._aurora_target.items():
+            self._aurora_current[k] += (v - self._aurora_current[k]) * follow
+        self._update_stars()
+        self.update()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._seed_stars(force=True)
+
+    def _seed_stars(self, *, force: bool = False) -> None:
+        w = float(max(1, self.width()))
+        h = float(max(1, self.height()))
+        if w < 40 or h < 40:
+            self._stars = []
+            return
+        if (not force) and self._stars and len(self._stars) == self._star_count:
+            return
+        self._stars = []
+        for _ in range(self._star_count):
+            self._stars.append(
+                {
+                    "x": random.random() * w,
+                    "y": random.random() * h,
+                    "vy": 0.22 + random.random() * 0.75,
+                    "r": 0.50 + random.random() * 1.75,
+                    "alpha": 70 + random.random() * 155,
+                    "twinkle": 0.7 + random.random() * 1.9,
+                    "phase": random.random() * math.pi * 2.0,
+                }
+            )
+
+    def _update_stars(self) -> None:
+        if not self._stars:
+            self._seed_stars()
+        w = float(max(1, self.width()))
+        h = float(max(1, self.height()))
+        if w < 40 or h < 40:
+            return
+        for star in self._stars:
+            star["y"] += star["vy"]
+            star["x"] += math.sin((self._phase * 0.010) + star["phase"]) * 0.24
+            if star["y"] > h + 8.0:
+                star["y"] = -8.0
+                star["x"] = random.random() * w
+                star["alpha"] = 70 + random.random() * 155
+                star["r"] = 0.50 + random.random() * 1.75
+
+    def paintEvent(self, _event) -> None:
+        w = float(max(1, self.width()))
+        h = float(max(1, self.height()))
+        if w < 40 or h < 40:
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+
+        t = self._phase
+        samples = 84
+        x_start = -0.08 * w
+        x_span = 1.16 * w
+        # Hard boundary: aurora upper edge must NEVER enter setting-panel area.
+        top_min = 0.0
+        panel_top_boundary = h * 0.24
+        host = self.parent()
+        if host is not None and hasattr(host, "_middle_stack"):
+            try:
+                middle_stack = host._middle_stack  # type: ignore[attr-defined]
+                panel_top_boundary = max(6.0, min(h - 2.0, float(middle_stack.geometry().top())))
+            except Exception:
+                pass
+
+        aurora = self._aurora_current
+        upper_points: list[tuple[float, float]] = []
+        lower_points: list[tuple[float, float]] = []
+        for i in range(samples + 1):
+            ratio = i / samples
+            x = x_start + x_span * ratio
+            # Treat aurora as a hanging strip: anchor from sky (top), then fall downward.
+            upper_base = (((1.0 - ratio) * aurora["left"]) + (ratio * aurora["right"])) * h
+            wave_a = math.sin((ratio * aurora["freq"] * 2.0 * math.pi) + (t * self._flow_speed) + aurora["shift"])
+            wave_b = math.sin((ratio * 6.8) - (t * self._drift_speed) + aurora["shift"] * 1.2)
+            wave_c = math.sin((ratio * 11.4) + (t * (self._drift_speed * 0.6)) + aurora["shift"] * 2.1)
+            wave_d = math.sin((ratio * 23.0) + (t * (self._drift_speed * 0.32)) + aurora["shift"] * 2.8)
+            upper = upper_base + (
+                aurora["amp"] * 0.42 * wave_a + 0.016 * wave_b + 0.011 * wave_c + 0.007 * wave_d
+            ) * h
+            thick_ratio = aurora["width"] * (
+                0.70
+                + 0.34 * math.sin((ratio * 8.2) + (t * 0.010) + aurora["shift"])
+                + 0.21 * math.sin((ratio * 17.0) - (t * 0.005))
+                + 0.13 * math.sin((ratio * 29.0) + (t * 0.003))
+            )
+            thick = max(0.2 * h, 0.8 * h, thick_ratio * h)
+            # Keep upper edge within sky area (above setting panel), but with a more irregular, organic cap.
+            cap_wave = (
+                4.0
+                + 6.0 * (0.5 + 0.5 * math.sin((ratio * 4.3) + (t * 0.006) + aurora["shift"]))
+                + 3.5 * (0.5 + 0.5 * math.sin((ratio * 12.7) - (t * 0.003) + aurora["shift"] * 1.9))
+                + 2.0 * (0.5 + 0.5 * math.sin((ratio * 27.0) + (t * 0.002)))
+                + 1.7 * (0.5 + 0.5 * math.sin((ratio * 48.8) - (t * 0.0031) + aurora["shift"] * 2.6))
+                + 1.0 * math.sin((ratio * 88.0) + (t * 0.0015) + math.sin(ratio * 3.5 + t * 0.02))
+                + 0.8 * math.sin((ratio * 70.0) - (t * 0.0026) + aurora["shift"] * 3.5)
+                + 1.2 * (0.5 + 0.5 * math.sin((ratio * 16.2) + t * 0.012 + math.cos(ratio * 8.7)))
+            )
+            sky_floor = panel_top_boundary - cap_wave
+            if upper > sky_floor:
+                exceed = upper - sky_floor
+                upper = sky_floor + exceed * 0.14
+            elif upper < top_min:
+                upper = top_min
+            lower = upper + thick
+            upper_points.append((x, upper))
+            lower_points.append((x, lower))
+
+        alpha_breath = 0.42 + 0.58 * (0.5 + 0.5 * math.sin((t * 0.010) + aurora["shift"] * 1.2))
+        alpha_core = int(aurora["alpha"] * alpha_breath)
+        # Single continuous aurora strip.
+        path = QPainterPath()
+        path.moveTo(upper_points[0][0], upper_points[0][1])
+        for x, y in upper_points[1:]:
+            path.lineTo(x, y)
+        for x, y in reversed(lower_points):
+            path.lineTo(x, y)
+        path.closeSubpath()
+
+        y_min = min(min(y for _, y in upper_points), min(y for _, y in lower_points))
+        y_max = max(max(y for _, y in upper_points), max(y for _, y in lower_points))
+        # Aurora hue by wavelength feeling: top pink, bottom green.
+        grad = QLinearGradient(0.0, y_min, 0.0, y_max)
+        grad.setColorAt(0.00, QColor(255, 168, 230, 0))
+        grad.setColorAt(0.20, QColor(255, 156, 224, int(alpha_core * 0.52)))
+        grad.setColorAt(0.50, QColor(255, 145, 214, int(alpha_core * 0.98)))
+        grad.setColorAt(0.80, QColor(122, 255, 201, int(alpha_core * 0.62)))
+        grad.setColorAt(1.00, QColor(114, 255, 196, 0))
+        painter.fillPath(path, grad)
+
+        halo_pen = QPen(QColor(255, 180, 232, int(alpha_core * 0.22)))
+        halo_pen.setWidthF(1.3)
+        halo_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        halo_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(halo_pen)
+        edge = QPainterPath()
+        edge.moveTo(upper_points[0][0], upper_points[0][1])
+        for x, y in upper_points[1:]:
+            edge.lineTo(x, y)
+        painter.drawPath(edge)
+        painter.setPen(Qt.PenStyle.NoPen)
+
+        # White star glints across full window.
+        for star in self._stars:
+            twinkle = 0.52 + 0.48 * (0.5 + 0.5 * math.sin((t * 0.055 * star["twinkle"]) + star["phase"]))
+            alpha = int(star["alpha"] * twinkle)
+            if alpha < 10:
+                continue
+            x = star["x"]
+            y = star["y"]
+            r = star["r"]
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(247, 252, 255, alpha))
+            painter.drawEllipse(QPoint(int(x), int(y)), max(1, int(r)), max(1, int(r)))
+            if twinkle > 0.83:
+                pen = QPen(QColor(255, 255, 255, int(alpha * 0.55)))
+                pen.setWidthF(0.8)
+                painter.setPen(pen)
+                painter.drawLine(QPoint(int(x - r * 1.8), int(y)), QPoint(int(x + r * 1.8), int(y)))
+                painter.drawLine(QPoint(int(x), int(y - r * 1.8)), QPoint(int(x), int(y + r * 1.8)))
+
+
+class MiniStarOverlay(QWidget):
+    """Subtle star glints for MiniCallBar."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self._stars: list[dict[str, float]] = []
+        self._star_count = 26
+        self._phase = 0.0
+        self._timer = QTimer(self)
+        self._timer.setInterval(40)
+        self._timer.timeout.connect(self._on_tick)
+        self._timer.start()
+
+    def _on_tick(self) -> None:
+        self._phase += 1.0
+        self.update()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._seed_stars(force=True)
+
+    def _seed_stars(self, *, force: bool = False) -> None:
+        w = float(max(1, self.width()))
+        h = float(max(1, self.height()))
+        if (not force) and len(self._stars) == self._star_count:
+            return
+        self._stars = []
+        for _ in range(self._star_count):
+            self._stars.append(
+                {
+                    "x": random.random() * w,
+                    "y": random.random() * h,
+                    "r": 0.35 + random.random() * 0.95,
+                    "alpha": 55 + random.random() * 125,
+                    "twinkle": 0.8 + random.random() * 1.8,
+                    "phase": random.random() * math.pi * 2.0,
+                }
+            )
+
+    def paintEvent(self, _event) -> None:
+        if not self._stars:
+            self._seed_stars()
+        w = self.width()
+        h = self.height()
+        if w <= 2 or h <= 2:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        clip = QPainterPath()
+        clip.addRoundedRect(self.rect(), 20.0, 20.0)
+        painter.setClipPath(clip)
+        t = self._phase
+        for star in self._stars:
+            twinkle = 0.46 + 0.54 * (0.5 + 0.5 * math.sin((t * 0.070 * star["twinkle"]) + star["phase"]))
+            alpha = int(star["alpha"] * twinkle)
+            if alpha < 10:
+                continue
+            x = star["x"]
+            y = star["y"]
+            r = star["r"]
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(246, 252, 255, alpha))
+            painter.drawEllipse(QPoint(int(x), int(y)), max(1, int(r)), max(1, int(r)))
+            if twinkle > 0.84:
+                pen = QPen(QColor(255, 255, 255, int(alpha * 0.52)))
+                pen.setWidthF(0.75)
+                painter.setPen(pen)
+                painter.drawLine(QPoint(int(x - r * 1.6), int(y)), QPoint(int(x + r * 1.6), int(y)))
+                painter.drawLine(QPoint(int(x), int(y - r * 1.6)), QPoint(int(x), int(y + r * 1.6)))
 
 
 class StickyNoteWindow(QDialog):
@@ -200,6 +493,7 @@ class MiniCallBar(QDialog):
         root.setSpacing(8)
 
         panel = QFrame(self)
+        self._panel = panel
         panel.setObjectName("miniPanel")
         box = QVBoxLayout(panel)
         box.setContentsMargins(10, 8, 10, 8)
@@ -248,6 +542,10 @@ class MiniCallBar(QDialog):
         btn_row.addWidget(self.pause_btn, 1)
         btn_row.addWidget(self.exit_btn, 1)
 
+        self._star_overlay = MiniStarOverlay(panel)
+        self._star_overlay.setGeometry(panel.rect())
+        self._star_overlay.lower()
+
         box.addLayout(top_row)
         box.addLayout(btn_row)
         root.addWidget(panel, 1)
@@ -265,30 +563,30 @@ class MiniCallBar(QDialog):
     @staticmethod
     def _default_theme_tokens() -> dict[str, str]:
         return {
-            "mini_panel_a": "#fff4f6",
-            "mini_panel_b": "#ffe9ef",
-            "mini_panel_border": "rgba(255, 190, 176, 215)",
-            "mini_text": "#4c5b67",
-            "mini_focus": "#2f9e67",
-            "mini_break": "#d89a18",
-            "mini_pause": "#6c7a89",
-            "mini_config": "#5f6f82",
-            "mini_hangup": "#d9534f",
-            "mini_timer": "#ff6b6b",
-            "mini_btn_a": "#ffffff",
-            "mini_btn_b": "#f8f9fa",
-            "mini_btn_border": "rgba(219, 224, 229, 220)",
-            "mini_btn_text": "#111111",
-            "mini_btn_hover": "rgba(255, 158, 139, 220)",
-            "mini_btn_pressed": "#eef1f4",
-            "mini_danger_a": "#fff0f5",
-            "mini_danger_b": "#ffe2ed",
-            "mini_danger_border": "#e5b0c7",
-            "mini_danger_text": "#111111",
-            "mini_danger_hover_a": "#fff4f8",
-            "mini_danger_hover_b": "#ffe8f0",
-            "mini_danger_pressed_a": "#ffe8f1",
-            "mini_danger_pressed_b": "#ffdbe8",
+            "mini_panel_a": "rgba(18, 30, 52, 0.92)",
+            "mini_panel_b": "rgba(34, 53, 82, 0.92)",
+            "mini_panel_border": "rgba(176, 207, 246, 0.58)",
+            "mini_text": "#D7E9FF",
+            "mini_focus": "#89E4C0",
+            "mini_break": "#F9D188",
+            "mini_pause": "#C0D5EE",
+            "mini_config": "#B8CCE5",
+            "mini_hangup": "#FFB8CF",
+            "mini_timer": "#F0C9FF",
+            "mini_btn_a": "rgba(240, 232, 255, 0.62)",
+            "mini_btn_b": "rgba(220, 236, 255, 0.56)",
+            "mini_btn_border": "rgba(175, 205, 240, 0.60)",
+            "mini_btn_text": "#1B2A42",
+            "mini_btn_hover": "rgba(212, 228, 248, 0.88)",
+            "mini_btn_pressed": "rgba(183, 205, 233, 0.92)",
+            "mini_danger_a": "rgba(255, 223, 236, 0.74)",
+            "mini_danger_b": "rgba(244, 206, 227, 0.68)",
+            "mini_danger_border": "rgba(226, 167, 200, 0.86)",
+            "mini_danger_text": "#3A2540",
+            "mini_danger_hover_a": "rgba(255, 232, 242, 0.84)",
+            "mini_danger_hover_b": "rgba(248, 214, 232, 0.80)",
+            "mini_danger_pressed_a": "rgba(247, 211, 230, 0.86)",
+            "mini_danger_pressed_b": "rgba(239, 197, 220, 0.82)",
             "font_family": '"SF Pro Rounded", "PingFang SC", "Helvetica Neue", sans-serif',
         }
 
@@ -385,6 +683,12 @@ class MiniCallBar(QDialog):
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_offset = None
         super().mouseReleaseEvent(event)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, "_star_overlay") and hasattr(self, "_panel"):
+            self._star_overlay.setGeometry(self._panel.rect())
+            self._star_overlay.lower()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Escape:
@@ -533,6 +837,9 @@ class WithYouWindow(QDialog):
         interactive_root = QVBoxLayout(self._interactive_page)
         interactive_root.setContentsMargins(0, 0, 0, 0)
         interactive_root.setSpacing(0)
+        self._ribbon_overlay = Aurora(self)
+        self._ribbon_overlay.setGeometry(self.rect())
+        self._ribbon_overlay.hide()
 
         # Top: 上栏按内容自适应，保证轮次计数器不被挤压
         self._top_bar = QFrame(self._interactive_page)
@@ -574,19 +881,23 @@ class WithYouWindow(QDialog):
         top_row.addStretch(1)
         top_btn_row = QHBoxLayout()
         top_btn_row.setContentsMargins(0, 0, 0, 0)
-        top_btn_row.setSpacing(8)
+        top_btn_row.setSpacing(6)
         ui_scale = self._ui_scale()
-        self.mini_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.settings_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.exit_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.mini_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.settings_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.exit_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         top_btn_h = px(40, ui_scale)
+        top_btn_w = px(44, ui_scale)
         self.mini_btn.setMinimumHeight(top_btn_h)
         self.settings_btn.setMinimumHeight(top_btn_h)
         self.exit_btn.setMinimumHeight(top_btn_h)
+        self.mini_btn.setFixedWidth(top_btn_w)
+        self.settings_btn.setFixedWidth(top_btn_w)
+        self.exit_btn.setFixedWidth(top_btn_w)
         top_btn_row.addWidget(self.mini_btn, 1)
         top_btn_row.addWidget(self.settings_btn, 1)
         top_btn_row.addWidget(self.exit_btn, 1)
-        top_row.addLayout(top_btn_row, 3)
+        top_row.addLayout(top_btn_row)
         round_row = QHBoxLayout()
         round_row.setContentsMargins(0, 0, 0, 0)
         round_row.addStretch(1)
@@ -1405,70 +1716,70 @@ class WithYouWindow(QDialog):
         tokens = {
             "bg_dialog": "#0f141b",
             "text_light": "#e6edf3",
-            "panel_grad_a": "rgba(15, 20, 27, 1)",
-            "panel_grad_b": "rgba(200, 131, 156, 1)",
+            "panel_grad_a": "rgba(10, 18, 36, 1)",
+            "panel_grad_b": "rgba(34, 56, 86, 1)",
             "panel_border": "#ffffff",
             "settings_bg": "#eef2f6",
             "focus_window_bg": "#fdf0f4",
             "config_window_bg": "#eef2f6",
             "settings_panel_bg": "#ffeadc",
-            "status_text": "#F4F8FF",
-            "round_text": "#B6DCFF",
-            "tip_text": "#18222d",
-            "settings_text": "#16212C",
-            "unit_text": "#253342",
-            "divider": "#c6d0db",
-            # Keep settings cards at the same translucency level as action buttons.
-            "card_bg_a": "rgba(255,245,249,0.5)",
-            "card_bg_b": "rgba(255,231,241,0.5)",
-            "card_border": "rgba(231,191,209,0.5)",
-            "countdown": "#BDE1FF",
-            "input_bg": "rgba(245, 218, 227, 0.45)",
-            "input_border": "rgba(255, 255, 255, 0.36)",
-            "input_focus": "rgba(255, 255, 255, 0.62)",
-            "input_focus_bg": "rgba(255, 250, 247, 0.62)",
-            "btn_pink_top": "rgba(255,245,249,0.5)",
-            "btn_pink_bottom": "rgba(255,231,241,0.5)",
-            "btn_pink_border": "rgba(231,191,209,0.5)",
-            "btn_pink_border_pressed": "rgba(216,168,191,0.5)",
-            "btn_pink_hover_top": "#fff9fc",
-            "btn_pink_hover_bottom": "#ffedf5",
-            "text_dark": "#111111",
+            "status_text": "#EAF5FF",
+            "round_text": "#CFE8FF",
+            "tip_text": "#DDEBFF",
+            "settings_text": "#EAF3FF",
+            "unit_text": "#C8DBF7",
+            "divider": "rgba(180, 203, 233, 0.45)",
+            # Frosted cards over night-sky background.
+            "card_bg_a": "rgba(237, 245, 255, 0.30)",
+            "card_bg_b": "rgba(224, 236, 252, 0.20)",
+            "card_border": "rgba(191, 219, 255, 0.38)",
+            "countdown": "#DDF1FF",
+            "input_bg": "rgba(246, 251, 255, 0.42)",
+            "input_border": "rgba(197, 220, 246, 0.50)",
+            "input_focus": "rgba(211, 230, 252, 0.72)",
+            "input_focus_bg": "rgba(250, 253, 255, 0.62)",
+            "btn_pink_top": "rgba(241, 233, 255, 0.55)",
+            "btn_pink_bottom": "rgba(222, 238, 255, 0.50)",
+            "btn_pink_border": "rgba(184, 206, 238, 0.55)",
+            "btn_pink_border_pressed": "rgba(160, 184, 220, 0.60)",
+            "btn_pink_hover_top": "#f8fbff",
+            "btn_pink_hover_bottom": "#e9f2ff",
+            "text_dark": "#1B2A40",
             "font_family":" 'Source Han Sans SC', 'PingFang SC'",
-            "mini_panel_a": "rgba(255, 244, 246, 238)",
-            "mini_panel_b": "rgba(255, 233, 239, 238)",
-            "mini_panel_border": "rgba(255, 190, 176, 215)",
-            "mini_text": "#4c5b67",
-            "mini_focus": "#2f9e67",
-            "mini_break": "#d89a18",
-            "mini_pause": "#6c7a89",
-            "mini_config": "#5f6f82",
-            "mini_hangup": "#d9534f",
-            "mini_timer": "#ff6b6b",
-            "mini_btn_a": "#ffffff",
-            "mini_btn_b": "#f8f9fa",
-            "mini_btn_border": "rgba(219, 224, 229, 220)",
-            "mini_btn_text": "#111111",
-            "mini_btn_hover": "rgba(255, 158, 139, 220)",
-            "mini_btn_pressed": "#eef1f4",
-            "mini_danger_a": "#fff0f5",
-            "mini_danger_b": "#ffe2ed",
-            "mini_danger_border": "#e5b0c7",
-            "mini_danger_text": "#111111",
-            "mini_danger_hover_a": "#fff4f8",
-            "mini_danger_hover_b": "#ffe8f0",
-            "mini_danger_pressed_a": "#ffe8f1",
-            "mini_danger_pressed_b": "#ffdbe8",
+            "mini_panel_a": "rgba(18, 30, 52, 0.92)",
+            "mini_panel_b": "rgba(34, 53, 82, 0.92)",
+            "mini_panel_border": "rgba(176, 207, 246, 0.58)",
+            "mini_text": "#D7E9FF",
+            "mini_focus": "#89E4C0",
+            "mini_break": "#F9D188",
+            "mini_pause": "#C0D5EE",
+            "mini_config": "#B8CCE5",
+            "mini_hangup": "#FFB8CF",
+            "mini_timer": "#F0C9FF",
+            "mini_btn_a": "rgba(240, 232, 255, 0.62)",
+            "mini_btn_b": "rgba(220, 236, 255, 0.56)",
+            "mini_btn_border": "rgba(175, 205, 240, 0.60)",
+            "mini_btn_text": "#1B2A42",
+            "mini_btn_hover": "rgba(212, 228, 248, 0.88)",
+            "mini_btn_pressed": "rgba(183, 205, 233, 0.92)",
+            "mini_danger_a": "rgba(255, 223, 236, 0.74)",
+            "mini_danger_b": "rgba(244, 206, 227, 0.68)",
+            "mini_danger_border": "rgba(226, 167, 200, 0.86)",
+            "mini_danger_text": "#3A2540",
+            "mini_danger_hover_a": "rgba(255, 232, 242, 0.84)",
+            "mini_danger_hover_b": "rgba(248, 214, 232, 0.80)",
+            "mini_danger_pressed_a": "rgba(247, 211, 230, 0.86)",
+            "mini_danger_pressed_b": "rgba(239, 197, 220, 0.82)",
             "focus_bg_cream": "#fdf0f4",
-            "macaron_pink": "#9B3F67",
-            "popup_bg": "#fdf0f5",
+            "macaron_pink": "#E8D0E6",
+            "popup_bg": "#EAF2FF",
         }
         tokens.update(focus_theme_base_tokens())
         # Keep high contrast for the focus-mode gradient background.
-        tokens["status_text"] = "#F4F8FF"
-        tokens["round_text"] = "#B6DCFF"
-        tokens["countdown"] = "#BDE1FF"
-        tokens["macaron_pink"] = "#9B3F67"
+        tokens["status_text"] = "#EAF5FF"
+        tokens["round_text"] = "#CFE8FF"
+        tokens["countdown"] = "#DDF1FF"
+        tokens["macaron_pink"] = "#E8D0E6"
         return tokens
 
     def _build_focus_stylesheet(self, scale: float) -> str:
@@ -1509,9 +1820,31 @@ class WithYouWindow(QDialog):
             QDialog#withYouWindow QFrame#bottomBar,
             QDialog#withYouWindow QScrollArea#settingsScroll,
             QDialog#withYouWindow QScrollArea#settingsScroll > QWidget#qt_scrollarea_viewport,
-            QDialog#withYouWindow QFrame#settingsContentPanel,
             QDialog#withYouWindow QFrame#withyouPanel {{
                 background: transparent;
+                border: none;
+            }}
+            QDialog#withYouWindow QFrame#interactivePage {{
+                background: rgba(9, 18, 34, 0.28);
+            }}
+            QDialog#withYouWindow QFrame#settingsContentPanel {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(28, 44, 68, 0.34),
+                    stop:1 rgba(41, 62, 92, 0.28)
+                );
+                border: none;
+                border-radius: 0px;
+            }}
+            QDialog#withYouWindow QFrame#topBar,
+            QDialog#withYouWindow QFrame#bottomBar {{
+                background: rgba(9, 17, 34, 0.34);
+                border: none;
+                border-radius: 0px;
+            }}
+            QDialog#withYouWindow[viewMode="config"] QFrame#topBar,
+            QDialog#withYouWindow[viewMode="config"] QFrame#bottomBar {{
+                background: rgba(9, 17, 34, 0.42);
                 border: none;
             }}
             QLabel#statusLabel {{ font-size: {px(17, scale)}px; font-weight: 700; color: {t["status_text"]}; }}
@@ -1531,9 +1864,9 @@ class WithYouWindow(QDialog):
                 border-radius: 14px;
             }}
             QLabel#companionInfoTopLabel {{
-                font-size: {px(13, scale)}px;
+                font-size: {px(16, scale)}px;
                 color: {t["status_text"]};
-                font-weight: 600;
+                font-weight: 700;
             }}
             QDialog[viewMode="config"] QLabel#companionInfoTopLabel {{
                 color: {t["settings_text"]};
@@ -1569,20 +1902,20 @@ class WithYouWindow(QDialog):
                 font-weight: 700;
             }}
             QPushButton#primaryBtn {{
-                border-radius: 12px;
+                border-radius: 16px;
                 min-height: {px(44, scale)}px;
                 font-size: {px(15, scale)}px;
                 padding: 6px 10px;
             }}
             QPushButton#ghostBtn {{
-                border-radius: 12px;
+                border-radius: 16px;
                 min-height: {px(36, scale)}px;
                 min-width: {px(66, scale)}px;
                 font-size: {px(13, scale)}px;
                 padding: 6px 10px;
             }}
             QPushButton#chocoBtn {{
-                border-radius: 10px;
+                border-radius: 14px;
                 min-height: {px(30, scale)}px;
                 min-width: 0px;
                 margin: 2px;
@@ -1590,7 +1923,7 @@ class WithYouWindow(QDialog):
                 font-size: {px(13, scale)}px;
             }}
             QPushButton#dangerBtn {{
-                border-radius: 12px;
+                border-radius: 16px;
                 min-height: {px(36, scale)}px;
                 min-width: {px(66, scale)}px;
                 font-size: {px(13, scale)}px;
@@ -1820,10 +2153,17 @@ class WithYouWindow(QDialog):
 
     def _set_cinematic_mode(self, *, fill: bool = False) -> None:
         self._stack.setCurrentWidget(self._cinematic_page)
+        if hasattr(self, "_ribbon_overlay"):
+            self._ribbon_overlay.hide()
+            self._ribbon_overlay.set_animating(False)
         self._activate_cinematic_video_output(fill=fill)
 
     def _set_interactive_mode(self) -> None:
         self._stack.setCurrentWidget(self._interactive_page)
+        if hasattr(self, "_ribbon_overlay"):
+            self._ribbon_overlay.show()
+            self._ribbon_overlay.raise_()
+            self._ribbon_overlay.set_animating(True)
 
     def _activate_cinematic_video_output(self, *, fill: bool) -> None:
         self._cinematic_fill_mode = fill
@@ -2510,6 +2850,10 @@ class WithYouWindow(QDialog):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        if hasattr(self, "_ribbon_overlay"):
+            self._ribbon_overlay.setGeometry(self.rect())
+            if self._stack.currentWidget() is self._interactive_page:
+                self._ribbon_overlay.raise_()
         self._sync_middle_height()
         self._render_frame()
         self._reposition_audio_popups_if_shown()
