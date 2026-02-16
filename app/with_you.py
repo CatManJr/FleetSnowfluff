@@ -27,7 +27,6 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMenu,
     QMessageBox,
-    QPushButton,
     QGraphicsDropShadowEffect,
     QScrollArea,
     QSizePolicy,
@@ -41,6 +40,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .design_tokens import focus_theme_base_tokens
+from .fluent_compat import apply_icon_button_layout
+from .fluent_compat import FPushButton as QPushButton
+from .fluent_compat import init_fluent_theme
 from .ui_scale import current_app_scale, px
 
 HAS_QVIDEO_WIDGET = _QVideoWidget is not None
@@ -404,6 +407,7 @@ class WithYouWindow(QDialog):
         parent=None,
     ) -> None:
         super().__init__(parent)
+        init_fluent_theme()
         self._resources_dir = resources_dir
         self._config_dir = config_dir
         self._settings_json_path = (config_dir / "settings.json") if config_dir is not None else None
@@ -571,9 +575,14 @@ class WithYouWindow(QDialog):
         top_btn_row = QHBoxLayout()
         top_btn_row.setContentsMargins(0, 0, 0, 0)
         top_btn_row.setSpacing(8)
+        ui_scale = self._ui_scale()
         self.mini_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.settings_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.exit_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        top_btn_h = px(40, ui_scale)
+        self.mini_btn.setMinimumHeight(top_btn_h)
+        self.settings_btn.setMinimumHeight(top_btn_h)
+        self.exit_btn.setMinimumHeight(top_btn_h)
         top_btn_row.addWidget(self.mini_btn, 1)
         top_btn_row.addWidget(self.settings_btn, 1)
         top_btn_row.addWidget(self.exit_btn, 1)
@@ -725,6 +734,9 @@ class WithYouWindow(QDialog):
         settings_actions.setSpacing(10)
         self.return_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.start_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        action_btn_h = px(42, ui_scale)
+        self.return_btn.setMinimumHeight(action_btn_h)
+        self.start_btn.setMinimumHeight(action_btn_h)
         settings_actions.addWidget(self.return_btn, 1)
         settings_actions.addWidget(self.start_btn, 1)
         settings_layout.addLayout(settings_actions)
@@ -799,6 +811,11 @@ class WithYouWindow(QDialog):
         self.pause_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.skip_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.note_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        choco_h = px(44, ui_scale)
+        self.chat_btn.setMinimumHeight(choco_h)
+        self.pause_btn.setMinimumHeight(choco_h)
+        self.skip_btn.setMinimumHeight(choco_h)
+        self.note_btn.setMinimumHeight(choco_h)
         buttons_grid.addWidget(self.chat_btn, 0, 0)
         buttons_grid.addWidget(self.pause_btn, 0, 1)
         buttons_grid.addWidget(self.skip_btn, 1, 0)
@@ -847,7 +864,7 @@ class WithYouWindow(QDialog):
             sink.videoFrameChanged.connect(self._on_video_frame_changed)
             self._sink = sink
             self._player.setVideoOutput(sink)
-            self._active_video_label = self._withyou_video
+            self._active_video_label = cast(QLabel, self._withyou_video)
         self._player.mediaStatusChanged.connect(self._on_media_status_changed)
         self._player.errorOccurred.connect(self._on_media_error)
         self._player.playbackStateChanged.connect(self._on_video_playback_state_changed)
@@ -1385,7 +1402,7 @@ class WithYouWindow(QDialog):
 
     @staticmethod
     def _focus_theme_tokens() -> dict[str, str]:
-        return {
+        tokens = {
             "bg_dialog": "#0f141b",
             "text_light": "#e6edf3",
             "panel_grad_a": "rgba(15, 20, 27, 1)",
@@ -1395,16 +1412,17 @@ class WithYouWindow(QDialog):
             "focus_window_bg": "#fdf0f4",
             "config_window_bg": "#eef2f6",
             "settings_panel_bg": "#ffeadc",
-            "status_text": "#f1f5f9",
-            "round_text": "#8EC6F9",
+            "status_text": "#F4F8FF",
+            "round_text": "#B6DCFF",
             "tip_text": "#18222d",
-            "settings_text": "#16212c",
+            "settings_text": "#16212C",
             "unit_text": "#253342",
             "divider": "#c6d0db",
-            "card_bg_a": "rgba(245, 218, 227, 1)",
-            "card_bg_b": "rgba(247, 249, 251, 1)",
-            "card_border": "#ffffff",
-            "countdown": "#8EC6F9",
+            # Keep settings cards at the same translucency level as action buttons.
+            "card_bg_a": "rgba(255,245,249,0.5)",
+            "card_bg_b": "rgba(255,231,241,0.5)",
+            "card_border": "rgba(231,191,209,0.5)",
+            "countdown": "#BDE1FF",
             "input_bg": "rgba(245, 218, 227, 0.45)",
             "input_border": "rgba(255, 255, 255, 0.36)",
             "input_focus": "rgba(255, 255, 255, 0.62)",
@@ -1442,9 +1460,16 @@ class WithYouWindow(QDialog):
             "mini_danger_pressed_a": "#ffe8f1",
             "mini_danger_pressed_b": "#ffdbe8",
             "focus_bg_cream": "#fdf0f4",
-            "macaron_pink": "#e8a0b0",
+            "macaron_pink": "#9B3F67",
             "popup_bg": "#fdf0f5",
         }
+        tokens.update(focus_theme_base_tokens())
+        # Keep high contrast for the focus-mode gradient background.
+        tokens["status_text"] = "#F4F8FF"
+        tokens["round_text"] = "#B6DCFF"
+        tokens["countdown"] = "#BDE1FF"
+        tokens["macaron_pink"] = "#9B3F67"
+        return tokens
 
     def _build_focus_stylesheet(self, scale: float) -> str:
         t = self._focus_theme_tokens()
@@ -1502,7 +1527,7 @@ class WithYouWindow(QDialog):
             QFrame#settingsDivider {{ background: {t["divider"]}; border-radius: 1px; margin-bottom: 2px; }}
             QFrame#settingCard {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {t["card_bg_a"]}, stop:1 {t["card_bg_b"]});
-                border: none;
+                border: 1px solid {t["card_border"]};
                 border-radius: 14px;
             }}
             QLabel#companionInfoTopLabel {{
@@ -1583,6 +1608,13 @@ class WithYouWindow(QDialog):
                 border-bottom: 1px solid {t["btn_pink_border_pressed"]};
                 padding-top: 7px;
                 padding-bottom: 5px;
+            }}
+            QPushButton[iconOnly="true"] {{
+                padding: 0px;
+                margin: 0px;
+                min-width: 0px;
+                min-height: 0px;
+                text-align: center;
             }}
         """
 
@@ -1795,23 +1827,23 @@ class WithYouWindow(QDialog):
 
     def _activate_cinematic_video_output(self, *, fill: bool) -> None:
         self._cinematic_fill_mode = fill
-        if HAS_QVIDEO_WIDGET:
+        if HAS_QVIDEO_WIDGET and _QVideoWidget is not None and isinstance(self._cinematic_video, _QVideoWidget):
             mode = Qt.AspectRatioMode.KeepAspectRatioByExpanding if fill else Qt.AspectRatioMode.KeepAspectRatio
             self._cinematic_video.setAspectRatioMode(mode)
             self._active_video_widget = self._cinematic_video
             self._player.setVideoOutput(self._cinematic_video)
             return
-        self._active_video_label = self._cinematic_video
-        self._cinematic_video.setPixmap(QPixmap())
+        self._active_video_label = cast(QLabel, self._cinematic_video)
+        self._active_video_label.setPixmap(QPixmap())
 
     def _activate_withyou_video_output(self) -> None:
         self._cinematic_fill_mode = False
-        if HAS_QVIDEO_WIDGET:
+        if HAS_QVIDEO_WIDGET and _QVideoWidget is not None and isinstance(self._withyou_video, _QVideoWidget):
             self._withyou_video.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatioByExpanding)
             self._active_video_widget = self._withyou_video
             self._player.setVideoOutput(self._withyou_video)
             return
-        self._active_video_label = self._withyou_video
+        self._active_video_label = cast(QLabel, self._withyou_video)
 
     def _enter_config(self, *, preserve_progress: bool = False) -> None:
         self._phase = "config"
@@ -2354,30 +2386,80 @@ class WithYouWindow(QDialog):
                     return icon
         return None
 
-    def _apply_icon_to_button(self, button: QPushButton, tip: str, candidates: tuple[str, ...], size: int = 20) -> None:
+    def _apply_icon_to_button(
+        self,
+        button: QPushButton,
+        tip: str,
+        candidates: tuple[str, ...],
+        size: int = 20,
+    ) -> None:
         button.setToolTip(tip)
         icon = self._load_icon(candidates)
         if icon is None:
             return
         button.setIcon(icon)
-        button.setIconSize(QSize(size, size))
         button.setText("")
+        apply_icon_button_layout(button, icon_size=size, edge_padding=14, min_edge=30, set_fixed=False)
 
     def _apply_icon_buttons(self) -> None:
-        self._apply_icon_to_button(self.chat_btn, "聊天窗口", ("chat.png", "chat.PNG", "jumpout.png"))
-        self._apply_icon_to_button(self.mini_btn, "悬浮条", ("exitfull.png", "expand.png", "fullscreen.jpeg"))
-        self._apply_icon_to_button(self.settings_btn, "设置", ("setting.png", "setting.PNG"))
-        self._apply_icon_to_button(self.return_btn, "返回当前进度", ("return.png", "return.PNG"))
-        self._apply_icon_to_button(self.exit_btn, "退出", ("exit", "exit.png", "exit.PNG", "exitfull.png"))
-        self._apply_icon_to_button(self.note_btn, "便利贴", ("post-it.png", "post-it.PNG", "notepad.png", "notepad.PNG"))
+        self._apply_icon_to_button(
+            self.chat_btn,
+            "聊天窗口",
+            ("chat.png", "chat.PNG", "jumpout.png"),
+        )
+        self._apply_icon_to_button(
+            self.mini_btn,
+            "悬浮条",
+            ("exitfull.png", "expand.png", "fullscreen.jpeg"),
+        )
+        self._apply_icon_to_button(
+            self.settings_btn,
+            "设置",
+            ("setting.png", "setting.PNG"),
+        )
+        self._apply_icon_to_button(
+            self.return_btn,
+            "返回当前进度",
+            ("return.png", "return.PNG"),
+        )
+        self._apply_icon_to_button(
+            self.exit_btn,
+            "退出",
+            ("exit", "exit.png", "exit.PNG", "exitfull.png"),
+        )
+        self._apply_icon_to_button(
+            self.note_btn,
+            "便利贴",
+            ("post-it.png", "post-it.PNG", "notepad.png", "notepad.PNG"),
+        )
+        self._apply_icon_to_button(
+            self.skip_btn,
+            "跳过当前环节",
+            ("skip.png", "skip.PNG", "next.png", "next.PNG"),
+        )
         self._set_pause_button_state()
 
     def _apply_mini_bar_icons(self) -> None:
         if self._mini_bar is None:
             return
-        self._apply_icon_to_button(self._mini_bar.chat_btn, "聊天窗口", ("chat.png", "chat.PNG", "jumpout.png"), size=18)
-        self._apply_icon_to_button(self._mini_bar.expand_btn, "展开", ("expand.png", "fullscreen.jpeg"), size=18)
-        self._apply_icon_to_button(self._mini_bar.exit_btn, "退出", ("exit", "exit.png", "exit.PNG", "exitfull.png"), size=18)
+        self._apply_icon_to_button(
+            self._mini_bar.chat_btn,
+            "聊天窗口",
+            ("chat.png", "chat.PNG", "jumpout.png"),
+            size=18,
+        )
+        self._apply_icon_to_button(
+            self._mini_bar.expand_btn,
+            "展开",
+            ("expand.png", "fullscreen.jpeg"),
+            size=18,
+        )
+        self._apply_icon_to_button(
+            self._mini_bar.exit_btn,
+            "退出",
+            ("exit", "exit.png", "exit.PNG", "exitfull.png"),
+            size=18,
+        )
         self._set_pause_button_state()
 
     def _set_pause_button_visual(self, button: QPushButton, *, paused: bool, mini: bool = False) -> None:
@@ -2394,11 +2476,12 @@ class WithYouWindow(QDialog):
         icon = self._load_icon(icon_names)
         if icon is None:
             button.setIcon(QIcon())
+            button.setProperty("iconOnly", False)
             button.setText(text)
             return
         button.setIcon(icon)
-        button.setIconSize(QSize(icon_size, icon_size))
         button.setText("")
+        apply_icon_button_layout(button, icon_size=icon_size, edge_padding=14, min_edge=30, set_fixed=False)
 
     def _set_pause_button_state(self) -> None:
         self._set_pause_button_visual(self.pause_btn, paused=self._is_paused, mini=False)

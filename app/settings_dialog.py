@@ -11,11 +11,13 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QLineEdit,
-    QPushButton,
     QSpinBox,
     QVBoxLayout,
 )
 
+from .design_tokens import brand_palette
+from .fluent_compat import FPushButton as QPushButton
+from .fluent_compat import init_fluent_theme
 from .ui_scale import current_app_scale, px
 
 
@@ -32,6 +34,7 @@ class SettingsDialog(QDialog):
         parent=None,
     ) -> None:
         super().__init__(parent)
+        init_fluent_theme()
         self.setWindowTitle("Fleet Snowfluff 设置")
         self.setModal(True)
         self.resize(460, 250)
@@ -63,6 +66,8 @@ class SettingsDialog(QDialog):
         self.chat_context_turns_input.setValue(max(0, int(chat_context_turns)))
 
         form = QFormLayout()
+        form.setHorizontalSpacing(10)
+        form.setVerticalSpacing(8)
         form.addRow("DeepSeek API Key", self.api_key_input)
         form.addRow("最短跳跃距离", self.min_jump_distance_input)
         form.addRow("飞行速度", self.flight_speed_input)
@@ -74,6 +79,7 @@ class SettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
 
         quick_actions = QHBoxLayout()
+        quick_actions.setSpacing(8)
         open_history_btn = QPushButton("打开本地聊天记录 JSON")
         open_history_btn.setObjectName("quickActionBtn")
         open_history_btn.setEnabled(open_chat_history_callback is not None)
@@ -86,8 +92,12 @@ class SettingsDialog(QDialog):
             open_persona_btn.clicked.connect(open_persona_callback)
         quick_actions.addWidget(open_history_btn, 1)
         quick_actions.addWidget(open_persona_btn, 1)
+        for btn in (open_history_btn, open_persona_btn):
+            btn.setMinimumHeight(32)
 
         root = QVBoxLayout(self)
+        root.setContentsMargins(12, 10, 12, 10)
+        root.setSpacing(10)
         root.addLayout(form)
         root.addLayout(quick_actions)
         root.addWidget(buttons)
@@ -97,74 +107,107 @@ class SettingsDialog(QDialog):
         app = QApplication.instance()
         scale = current_app_scale(app) if app is not None else 1.0
         fs = px(15, scale)
+        button_h = px(34, scale)
+        p = brand_palette()
         self.setStyleSheet(
             """
             QDialog {
-                background: #fff7fb;
-                color: #2a1f2a;
+                background: %s;
+                color: %s;
             }
             QLabel {
-                color: #2a1f2a;
+                color: %s;
                 font-size: %dpx;
             }
             QLineEdit, QSpinBox {
-                background: #fff2f8;
-                border: 2px solid #ffb3d4;
+                background: %s;
+                border: 2px solid %s;
                 border-radius: 10px;
                 padding: 4px 8px;
                 min-height: 30px;
                 font-size: %dpx;
-                color: #2a1f2a;
+                color: %s;
             }
             QLineEdit::placeholder {
-                color: #a14a73;
+                color: %s;
             }
             QCheckBox {
-                color: #7a2f51;
+                color: %s;
                 font-size: %dpx;
             }
             QDialogButtonBox QPushButton {
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #fff0f8,
-                    stop:1 #ffe4f1
+                    stop:0 %s,
+                    stop:1 %s
                 );
-                border: 1px solid #ffb7d6;
+                border: 1px solid %s;
                 border-radius: 10px;
-                color: #8d365d;
-                min-height: 32px;
+                color: %s;
+                min-height: %dpx;
                 padding: 4px 12px;
                 font-size: %dpx;
             }
             QDialogButtonBox QPushButton:hover {
-                border-color: #ff8fc1;
-                background: #ffe7f3;
+                border-color: %s;
+                background: %s;
             }
             QPushButton#quickActionBtn {
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #fff0f8,
-                    stop:1 #ffe4f1
+                    stop:0 %s,
+                    stop:1 %s
                 );
-                border: 1px solid #ffb7d6;
+                border: 1px solid %s;
                 border-radius: 10px;
-                color: #8d365d;
-                min-height: 30px;
+                color: %s;
+                min-height: %dpx;
                 padding: 4px 10px;
                 font-size: %dpx;
                 font-weight: 600;
             }
             QPushButton#quickActionBtn:hover {
-                border-color: #ff8fc1;
-                background: #ffe7f3;
+                border-color: %s;
+                background: %s;
             }
             QPushButton#quickActionBtn:disabled {
-                color: #b88aa0;
-                border-color: #f0cade;
-                background: #fff8fb;
+                color: %s;
+                border-color: %s;
+                background: %s;
             }
             """
-            % (fs, fs, fs, fs, fs)
+            % (
+                p["white_soft"],
+                p["ink_900"],
+                p["ink_900"],
+                fs,
+                p["pink_50"],
+                p["pink_300"],
+                fs,
+                p["ink_900"],
+                p["pink_500"],
+                p["pink_500"],
+                fs,
+                p["pink_50"],
+                p["pink_100"],
+                p["pink_300"],
+                p["pink_500"],
+                button_h,
+                fs,
+                p["pink_400"],
+                p["pink_100"],
+                p["pink_50"],
+                p["pink_100"],
+                p["pink_300"],
+                p["pink_500"],
+                button_h,
+                fs,
+                p["pink_400"],
+                p["pink_100"],
+                p["pink_300"],
+                p["pink_200"],
+                p["white"],
+            )
         )
 
     def event(self, event) -> bool:

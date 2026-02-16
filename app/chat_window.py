@@ -21,12 +21,16 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPlainTextEdit,
-    QPushButton,
     QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
 )
 
+from .design_tokens import chat_theme_tokens
+from .fluent_compat import apply_icon_button_layout
+from .fluent_compat import FPushButton as QPushButton
+from .fluent_compat import fluent_icon
+from .fluent_compat import init_fluent_theme
 from .with_you import WithYouWindow
 from .ui_scale import current_app_scale, px
 
@@ -175,6 +179,7 @@ class ChatWindow(QDialog):
         self._pending_prompt: str = ""
         self._with_you_window: WithYouWindow | None = None
         self._is_closing = False
+        init_fluent_theme()
 
         self.setWindowTitle("飞讯")
         self.setWindowFlags(
@@ -196,34 +201,7 @@ class ChatWindow(QDialog):
 
     @staticmethod
     def _chat_theme_tokens() -> dict[str, str]:
-        return {
-            "bg_dialog": "#f6f8fb",
-            "text_primary": "#1f2a36",
-            "text_muted": "#667788",
-            "panel": "#ffffff",
-            "panel_soft": "#fff5f9",
-            "panel_border": "#d9e2eb",
-            "accent_top": "#fff5f9",
-            "accent_bottom": "#ffe7f1",
-            "accent_border": "#e7bfd1",
-            "accent_border_pressed": "#d8a8bf",
-            "accent_hover_top": "#fff9fc",
-            "accent_hover_bottom": "#ffedf5",
-            "send_top": "#ff9e8b",
-            "send_bottom": "#ff6b6b",
-            "send_border": "#ea6f6f",
-            "send_hover_top": "#ffb09f",
-            "send_hover_bottom": "#ff7f7f",
-            "timeline_bg": "#fffafd",
-            "timeline_item_user_top": "#ffe8f2",
-            "timeline_item_user_bottom": "#ffd9e8",
-            "timeline_item_user_border": "#e2abc3",
-            "timeline_item_assistant_top": "#ffffff",
-            "timeline_item_assistant_bottom": "#f6f8fb",
-            "timeline_item_assistant_border": "#d7e0e9",
-            "timestamp": "#8b96a6",
-            "font_family": '"SF Pro Rounded", "PingFang SC", "Helvetica Neue", sans-serif',
-        }
+        return chat_theme_tokens()
 
     @staticmethod
     def _load_send_icon(icon_path: Path) -> QIcon | None:
@@ -305,6 +283,11 @@ class ChatWindow(QDialog):
         self.clear_button = QPushButton("清空", self)
         self.clear_button.setObjectName("navActionButton")
         self.clear_button.clicked.connect(self._clear_history)
+        nav_btn_h = px(36, scale)
+        nav_btn_w = px(70, scale)
+        for btn in (self.call_button, self.log_button, self.clear_button):
+            btn.setMinimumHeight(nav_btn_h)
+            btn.setMinimumWidth(nav_btn_w)
         nav_layout.addWidget(self.call_button)
         nav_layout.addWidget(self.log_button)
         nav_layout.addWidget(self.clear_button)
@@ -341,15 +324,26 @@ class ChatWindow(QDialog):
         self.send_button.setMinimumSize(row_height, row_height)
         self.send_button.setMaximumSize(row_height, row_height)
         self.send_button.setToolTip("发送")
+        send_icon_size = px(24, scale)
         if self._send_icon_path is not None and self._send_icon_path.exists():
             send_icon = self._load_send_icon(self._send_icon_path)
             if send_icon is not None:
                 self.send_button.setIcon(send_icon)
-                self.send_button.setIconSize(QSize(row_height, row_height))
+                apply_icon_button_layout(self.send_button, icon_size=send_icon_size, edge_padding=24, min_edge=row_height)
+            else:
+                fluent = fluent_icon("AIRPLANE", "SEND")
+                if fluent is not None:
+                    self.send_button.setIcon(fluent)
+                    apply_icon_button_layout(self.send_button, icon_size=send_icon_size, edge_padding=24, min_edge=row_height)
+                else:
+                    self.send_button.setText("✈")
+        else:
+            fluent = fluent_icon("AIRPLANE", "SEND")
+            if fluent is not None:
+                self.send_button.setIcon(fluent)
+                apply_icon_button_layout(self.send_button, icon_size=send_icon_size, edge_padding=24, min_edge=row_height)
             else:
                 self.send_button.setText("✈")
-        else:
-            self.send_button.setText("✈")
         self.send_button.clicked.connect(self._send_message)
 
         input_layout.addWidget(self.input_box, 1, Qt.AlignmentFlag.AlignVCenter)
@@ -476,6 +470,8 @@ class ChatWindow(QDialog):
                 font-weight: 600;
                 font-size: {px(20, scale)}px;
                 padding: 0px;
+                margin: 0px;
+                text-align: center;
             }}
             QPushButton#sendButton:hover {{
                 background: qlineargradient(

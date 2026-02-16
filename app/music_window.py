@@ -30,7 +30,6 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
-    QPushButton,
     QSlider,
     QTreeWidget,
     QTreeWidgetItem,
@@ -38,7 +37,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .fluent_compat import apply_icon_button_layout
+from .fluent_compat import FPushButton as QPushButton
+from .fluent_compat import init_fluent_theme
 from .ui_scale import current_app_scale, px
+
+init_fluent_theme()
 
 
 class TrackInfo(NamedTuple):
@@ -481,6 +485,9 @@ class MiniPlayerBar(QDialog):
                 font-size: __FS24__px;
                 border: none;
                 background: transparent;
+                padding: 0px;
+                margin: 0px;
+                text-align: center;
             }
             QPushButton#miniBtn:hover {
                 background: rgba(255, 231, 246, 0.32);
@@ -503,6 +510,9 @@ class MiniPlayerBar(QDialog):
                 font-size: __FS25__px;
                 border: none;
                 background: transparent;
+                padding: 0px;
+                margin: 0px;
+                text-align: center;
             }
             QPushButton#miniBtnExpand:hover {
                 background: rgba(255, 231, 246, 0.35);
@@ -606,28 +616,33 @@ class MiniPlayerBar(QDialog):
 
         if "prev" in self._icons:
             self.prev_button.setIcon(self._icons["prev"])
-            self.prev_button.setIconSize(QSize(icon_size, icon_size))
+            apply_icon_button_layout(self.prev_button, icon_size=icon_size, edge_padding=22, min_edge=self._px(44), set_fixed=False)
         else:
+            self.prev_button.setProperty("iconOnly", False)
             self.prev_button.setText("⏮")
         if "next" in self._icons:
             self.next_button.setIcon(self._icons["next"])
-            self.next_button.setIconSize(QSize(icon_size, icon_size))
+            apply_icon_button_layout(self.next_button, icon_size=icon_size, edge_padding=22, min_edge=self._px(44), set_fixed=False)
         else:
+            self.next_button.setProperty("iconOnly", False)
             self.next_button.setText("⏭")
         if "playlist" in self._icons:
             self.playlist_button.setIcon(self._icons["playlist"])
-            self.playlist_button.setIconSize(QSize(icon_size, icon_size))
+            apply_icon_button_layout(self.playlist_button, icon_size=icon_size, edge_padding=22, min_edge=self._px(44), set_fixed=False)
         else:
+            self.playlist_button.setProperty("iconOnly", False)
             self.playlist_button.setText("☰")
         if "volume" in self._icons:
             self.volume_button.setIcon(self._icons["volume"])
-            self.volume_button.setIconSize(QSize(icon_size, icon_size))
+            apply_icon_button_layout(self.volume_button, icon_size=icon_size, edge_padding=22, min_edge=self._px(44), set_fixed=False)
         else:
+            self.volume_button.setProperty("iconOnly", False)
             self.volume_button.setText("🔊")
         if "expand" in self._icons:
             self.restore_button.setIcon(self._icons["expand"])
-            self.restore_button.setIconSize(QSize(icon_size, icon_size))
+            apply_icon_button_layout(self.restore_button, icon_size=icon_size, edge_padding=20, min_edge=self._px(42), set_fixed=False)
         else:
+            self.restore_button.setProperty("iconOnly", False)
             self.restore_button.setText("⤢")
 
     def _on_toggle_clicked(self) -> None:
@@ -655,14 +670,15 @@ class MiniPlayerBar(QDialog):
             self.play_button.setIcon(self._icons["pause"])
             self.play_button.setText("")
             icon_size = self._px(24)
-            self.play_button.setIconSize(QSize(icon_size, icon_size))
+            apply_icon_button_layout(self.play_button, icon_size=icon_size, edge_padding=22, min_edge=self._px(44), set_fixed=False)
         elif not is_playing and "play" in self._icons:
             self.play_button.setIcon(self._icons["play"])
             self.play_button.setText("")
             icon_size = self._px(24)
-            self.play_button.setIconSize(QSize(icon_size, icon_size))
+            apply_icon_button_layout(self.play_button, icon_size=icon_size, edge_padding=22, min_edge=self._px(44), set_fixed=False)
         else:
             self.play_button.setIcon(QIcon())
+            self.play_button.setProperty("iconOnly", False)
             self.play_button.setText("⏸" if is_playing else "▶")
         self.playlist_button.setEnabled(bool(self._list_tracks_fn()))
         self._sync_volume_ui(self._get_volume_percent_fn())
@@ -1282,6 +1298,8 @@ class MusicWindow(QDialog):
                 padding: 0px;
                 font-size: __FS34__px;
                 font-weight: 600;
+                margin: 0px;
+                text-align: center;
             }
             QPushButton#navActionBtn:hover {
                 background: qlineargradient(
@@ -1350,6 +1368,9 @@ class MusicWindow(QDialog):
                 color: #7a3658;
                 font-size: __FS16__px;
                 font-weight: 700;
+                padding: 0px;
+                margin: 0px;
+                text-align: center;
             }
             QPushButton#volumeToggleBtn:hover {
                 background: rgba(255, 255, 255, 0.56);
@@ -1437,9 +1458,11 @@ class MusicWindow(QDialog):
                 color: #7b3356;
                 min-width: __ACTION_W__px;
                 min-height: __ACTION_H__px;
-                padding: 4px;
+                padding: 0px;
                 font-size: __FS20__px;
                 font-weight: 600;
+                margin: 0px;
+                text-align: center;
             }
             QPushButton#actionBtn:hover {
                 background: qlineargradient(
@@ -1475,6 +1498,8 @@ class MusicWindow(QDialog):
                 padding: 0px;
                 font-size: __FS21__px;
                 font-weight: 700;
+                margin: 0px;
+                text-align: center;
             }
             QPushButton#actionMainBtn:hover {
                 background: qlineargradient(
@@ -1524,6 +1549,12 @@ class MusicWindow(QDialog):
             .replace("__MAINBTN__", str(px(48, scale)))
         )
         self.setStyleSheet(stylesheet)
+        action_w = px(48, scale)
+        action_h = px(40, scale)
+        main_btn = px(48, scale)
+        for btn in (self.import_button, self.remove_button, self.prev_button, self.next_button, self.random_button):
+            btn.setFixedSize(action_w, action_h)
+        self.play_button.setFixedSize(main_btn, main_btn)
 
     def _refresh_avatar_pixmap(self, avatar_size: int) -> None:
         if self._icon_path is not None and self._icon_path.exists():
@@ -1652,13 +1683,16 @@ class MusicWindow(QDialog):
         if is_visible and expand_icon is not None:
             self.float_bar_button.setIcon(expand_icon)
             self.float_bar_button.setText("")
-            self.float_bar_button.setIconSize(self.float_bar_button.size() - QSize(8, 8))
+            icon_size = max(self._px(22), min(self.float_bar_button.width(), self.float_bar_button.height()) - self._px(14))
+            apply_icon_button_layout(self.float_bar_button, icon_size=icon_size, edge_padding=18, min_edge=self.float_bar_button.height(), set_fixed=False)
         elif self._jumpout_icon is not None:
             self.float_bar_button.setIcon(self._jumpout_icon)
             self.float_bar_button.setText("")
-            self.float_bar_button.setIconSize(self.float_bar_button.size() - QSize(4, 4))
+            icon_size = max(self._px(22), min(self.float_bar_button.width(), self.float_bar_button.height()) - self._px(14))
+            apply_icon_button_layout(self.float_bar_button, icon_size=icon_size, edge_padding=18, min_edge=self.float_bar_button.height(), set_fixed=False)
         else:
             self.float_bar_button.setIcon(QIcon())
+            self.float_bar_button.setProperty("iconOnly", False)
             self.float_bar_button.setText("⤢" if is_visible else "⤡")
         self.float_bar_button.setToolTip("返回完整播放器" if is_visible else "切换到迷你播放器")
 
@@ -1695,15 +1729,18 @@ class MusicWindow(QDialog):
         if volume_icon is not None:
             self.volume_button.setIcon(volume_icon)
             self.volume_button.setText("")
-            self.volume_button.setIconSize(QSize(20, 20))
+            apply_icon_button_layout(self.volume_button, icon_size=self._px(20), edge_padding=12, min_edge=self._px(28), set_fixed=False)
         elif clamped == 0:
             self.volume_button.setIcon(QIcon())
+            self.volume_button.setProperty("iconOnly", False)
             self.volume_button.setText("🔇")
         elif clamped < 45:
             self.volume_button.setIcon(QIcon())
+            self.volume_button.setProperty("iconOnly", False)
             self.volume_button.setText("🔉")
         else:
             self.volume_button.setIcon(QIcon())
+            self.volume_button.setProperty("iconOnly", False)
             self.volume_button.setText("🔊")
 
     def _toggle_volume_popup(self) -> None:
@@ -1846,14 +1883,15 @@ class MusicWindow(QDialog):
         if is_playing and pause_icon is not None:
             self.play_button.setIcon(pause_icon)
             self.play_button.setText("")
-            self.play_button.setIconSize(QSize(icon_size, icon_size))
+            apply_icon_button_layout(self.play_button, icon_size=icon_size, edge_padding=16, min_edge=self.play_button.height(), set_fixed=False)
             return
         if (not is_playing) and play_icon is not None:
             self.play_button.setIcon(play_icon)
             self.play_button.setText("")
-            self.play_button.setIconSize(QSize(icon_size, icon_size))
+            apply_icon_button_layout(self.play_button, icon_size=icon_size, edge_padding=16, min_edge=self.play_button.height(), set_fixed=False)
             return
         self.play_button.setIcon(QIcon())
+        self.play_button.setProperty("iconOnly", False)
         self.play_button.setText("⏸" if is_playing else "▶")
 
     def _update_follow_ui(self) -> None:
@@ -1903,9 +1941,10 @@ class MusicWindow(QDialog):
                 button.setIcon(icon)
                 button.setText("")
                 resolved = icon_size if size == 24 else self._px(size)
-                button.setIconSize(QSize(resolved, resolved))
+                apply_icon_button_layout(button, icon_size=resolved, edge_padding=16, min_edge=max(button.height(), self._px(38)), set_fixed=False)
             else:
                 button.setIcon(QIcon())
+                button.setProperty("iconOnly", False)
                 button.setText(fallback)
 
         apply(self.import_button, "import", "⤓")

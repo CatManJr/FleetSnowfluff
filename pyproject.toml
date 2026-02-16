@@ -10,4 +10,6 @@ dependencies = [
     "openapi>=2.0.0",
     "pyinstaller>=6.18.0",
     "pyside6>=6.10.2",
+    "pyside6-fluent-widgets>=1.7.5",
+    "qtawesome>=1.4.0",
 ]

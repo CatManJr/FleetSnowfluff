@@ -7,6 +7,8 @@ from PySide6.QtGui import QKeyEvent, QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
 from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout
 
+from .fluent_compat import init_fluent_theme
+
 
 class TransformWindow(QDialog):
     playbackFinished = Signal()
@@ -14,6 +16,7 @@ class TransformWindow(QDialog):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        init_fluent_theme()
         self._emitted_finished = False
         self._desktop_scene_mode = False
         self._last_frame_pixmap: QPixmap | None = None
