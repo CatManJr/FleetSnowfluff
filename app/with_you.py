@@ -112,9 +112,10 @@ class Aurora(QWidget):
         self._phase = 0.0
         self._flow_speed = 0.020
         self._drift_speed = 0.008
-        self._aurora_current = self._make_aurora_state()
-        self._aurora_target = self._make_aurora_state()
-        self._target_hold_frames = 0
+        # Use a gentle startup state to avoid first-open single spikes.
+        self._aurora_current = self._make_aurora_state(gentle=True)
+        self._aurora_target = self._make_aurora_state(gentle=True)
+        self._target_hold_frames = random.randint(140, 220)
         self._star_count = 72
         self._stars: list[dict[str, float]] = []
         self._timer = QTimer(self)
@@ -123,17 +124,27 @@ class Aurora(QWidget):
         self._timer.start()
 
     @staticmethod
-    def _make_aurora_state() -> dict[str, float]:
+    def _make_aurora_state(*, gentle: bool = False) -> dict[str, float]:
+        if gentle:
+            return {
+                "left": random.uniform(0.03, 0.14),
+                "right": random.uniform(0.04, 0.16),
+                "width": random.uniform(0.44, 0.64),
+                "amp": random.uniform(0.052, 0.082),
+                "freq": random.uniform(0.72, 0.98),
+                "shift": random.uniform(0.0, math.pi * 2.0),
+                "alpha": random.uniform(116.0, 168.0),
+            }
         return {
             # Upper-edge anchor in sky region.
             "left": random.uniform(0.00, 0.20),
             "right": random.uniform(0.00, 0.24),
             # Ribbon width and motion parameters.
-            "width": random.uniform(0.30, 1.00),
+            "width": random.uniform(0.30, 0.80),
             "amp": random.uniform(0.050, 0.125),
             "freq": random.uniform(0.60, 1.20),
             "shift": random.uniform(0.0, math.pi * 2.0),
-            "alpha": random.uniform(126.0, 196.0),
+            "alpha": random.uniform(96.0, 196.0),
         }
 
     def set_animating(self, enabled: bool) -> None:
@@ -209,7 +220,7 @@ class Aurora(QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
 
         t = self._phase
-        samples = 84
+        samples = 120
         x_start = -0.08 * w
         x_span = 1.16 * w
         # Hard boundary: aurora upper edge must NEVER enter setting-panel area.
@@ -224,8 +235,10 @@ class Aurora(QWidget):
                 pass
 
         aurora = self._aurora_current
-        upper_points: list[tuple[float, float]] = []
-        lower_points: list[tuple[float, float]] = []
+        x_points: list[float] = []
+        upper_raw: list[float] = []
+        thick_values: list[float] = []
+        sky_floors: list[float] = []
         for i in range(samples + 1):
             ratio = i / samples
             x = x_start + x_span * ratio
@@ -234,34 +247,103 @@ class Aurora(QWidget):
             wave_a = math.sin((ratio * aurora["freq"] * 2.0 * math.pi) + (t * self._flow_speed) + aurora["shift"])
             wave_b = math.sin((ratio * 6.8) - (t * self._drift_speed) + aurora["shift"] * 1.2)
             wave_c = math.sin((ratio * 11.4) + (t * (self._drift_speed * 0.6)) + aurora["shift"] * 2.1)
-            wave_d = math.sin((ratio * 23.0) + (t * (self._drift_speed * 0.32)) + aurora["shift"] * 2.8)
+            wave_d = math.sin((ratio * 17.0) + (t * (self._drift_speed * 0.24)) + aurora["shift"] * 2.4)
             upper = upper_base + (
-                aurora["amp"] * 0.42 * wave_a + 0.016 * wave_b + 0.011 * wave_c + 0.007 * wave_d
+                aurora["amp"] * 0.42 * wave_a + 0.015 * wave_b + 0.010 * wave_c + 0.004 * wave_d
             ) * h
-            thick_ratio = aurora["width"] * (
-                0.70
-                + 0.34 * math.sin((ratio * 8.2) + (t * 0.010) + aurora["shift"])
-                + 0.21 * math.sin((ratio * 17.0) - (t * 0.005))
-                + 0.13 * math.sin((ratio * 29.0) + (t * 0.003))
+            # Use lower-frequency envelope so thickened areas become wider curtains.
+            thick_boost = (
+                0.22 * (0.5 + 0.5 * math.sin((ratio * 3.4) + (t * 0.006) + aurora["shift"] * 0.8))
+                + 0.14 * (0.5 + 0.5 * math.sin((ratio * 6.2) - (t * 0.003)))
+                + 0.06 * math.sin((ratio * 11.0) + (t * 0.002))
             )
-            thick = max(0.2 * h, 0.8 * h, thick_ratio * h)
+            thick_ratio = aurora["width"] * (0.58 + thick_boost)
+            thick = max(0, 0.4 * h, thick_ratio * h)
             # Keep upper edge within sky area (above setting panel), but with a more irregular, organic cap.
             cap_wave = (
                 4.0
                 + 6.0 * (0.5 + 0.5 * math.sin((ratio * 4.3) + (t * 0.006) + aurora["shift"]))
                 + 3.5 * (0.5 + 0.5 * math.sin((ratio * 12.7) - (t * 0.003) + aurora["shift"] * 1.9))
                 + 2.0 * (0.5 + 0.5 * math.sin((ratio * 27.0) + (t * 0.002)))
-                + 1.7 * (0.5 + 0.5 * math.sin((ratio * 48.8) - (t * 0.0031) + aurora["shift"] * 2.6))
-                + 1.0 * math.sin((ratio * 88.0) + (t * 0.0015) + math.sin(ratio * 3.5 + t * 0.02))
-                + 0.8 * math.sin((ratio * 70.0) - (t * 0.0026) + aurora["shift"] * 3.5)
                 + 1.2 * (0.5 + 0.5 * math.sin((ratio * 16.2) + t * 0.012 + math.cos(ratio * 8.7)))
             )
             sky_floor = panel_top_boundary - cap_wave
+            x_points.append(x)
+            upper_raw.append(upper)
+            thick_values.append(thick)
+            sky_floors.append(sky_floor)
+
+        # Smooth upper edge to avoid narrow pointy crests.
+        upper_smooth = upper_raw[:]
+        for _ in range(2):
+            pass_result = upper_smooth[:]
+            for i in range(1, len(upper_smooth) - 1):
+                pass_result[i] = (
+                    upper_smooth[i - 1] * 0.20
+                    + upper_smooth[i] * 0.60
+                    + upper_smooth[i + 1] * 0.20
+                )
+            upper_smooth = pass_result
+
+        # Smooth sky floor as well, so boundary compression won't create single-point needles.
+        sky_floor_smooth = sky_floors[:]
+        for _ in range(2):
+            floor_pass = sky_floor_smooth[:]
+            for i in range(1, len(sky_floor_smooth) - 1):
+                floor_pass[i] = (
+                    sky_floor_smooth[i - 1] * 0.20
+                    + sky_floor_smooth[i] * 0.60
+                    + sky_floor_smooth[i + 1] * 0.20
+                )
+            sky_floor_smooth = floor_pass
+
+        # Lower-edge spikes mainly come from abrupt thickness changes.
+        # Smooth thickness independently so lower boundary becomes curtain-like.
+        thick_smooth = thick_values[:]
+        for _ in range(2):
+            thick_pass = thick_smooth[:]
+            for i in range(1, len(thick_smooth) - 1):
+                thick_pass[i] = (
+                    thick_smooth[i - 1] * 0.22
+                    + thick_smooth[i] * 0.56
+                    + thick_smooth[i + 1] * 0.22
+                )
+            thick_smooth = thick_pass
+
+        soft_span = max(8.0, h * 0.085)
+        constrained_upper: list[float] = []
+        for upper, sky_floor in zip(upper_smooth, sky_floor_smooth):
             if upper > sky_floor:
                 exceed = upper - sky_floor
-                upper = sky_floor + exceed * 0.14
-            elif upper < top_min:
+                # Continuous soft compression: smooth boundary without sharp break.
+                factor = 0.22 + 0.10 * math.exp(-exceed / soft_span)
+                upper = sky_floor + exceed * factor
+            if upper < top_min:
                 upper = top_min
+            constrained_upper.append(upper)
+
+        # Widen local sharp peaks: spikes can exist, but should appear as a cluster.
+        widened_upper = constrained_upper[:]
+        sharp_threshold = max(1.8, h * 0.010)
+        for i in range(2, len(constrained_upper) - 2):
+            cur = constrained_upper[i]
+            second_diff = abs(constrained_upper[i - 1] - 2.0 * cur + constrained_upper[i + 1])
+            if second_diff < sharp_threshold:
+                continue
+            band = (
+                constrained_upper[i - 2] * 0.10
+                + constrained_upper[i - 1] * 0.25
+                + constrained_upper[i] * 0.30
+                + constrained_upper[i + 1] * 0.25
+                + constrained_upper[i + 2] * 0.10
+            )
+            widened_upper[i - 1] = widened_upper[i - 1] * 0.70 + band * 0.30
+            widened_upper[i] = widened_upper[i] * 0.55 + band * 0.45
+            widened_upper[i + 1] = widened_upper[i + 1] * 0.70 + band * 0.30
+
+        upper_points: list[tuple[float, float]] = []
+        lower_points: list[tuple[float, float]] = []
+        for x, upper, thick in zip(x_points, widened_upper, thick_smooth):
             lower = upper + thick
             upper_points.append((x, upper))
             lower_points.append((x, lower))
