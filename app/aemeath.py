@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -24,7 +25,6 @@ from .chat_window import ChatWindow
 from .music_window import MusicWindow
 from .seal_widget import SealWidget
 from .settings_dialog import SettingsDialog
-from .transform_window import TransformWindow
 from .ui_scale import current_app_scale, px
 
 
@@ -55,14 +55,14 @@ class Aemeath(QLabel):
         self._last_fullscreen_checked_at = 0.0
         self._chat_window: ChatWindow | None = None
         self._music_window: MusicWindow | None = None
-        self._transform_window: TransformWindow | None = None
-        self._transform_restore_fullscreen_mode = False
-        self._hidden_windows_before_transform: dict[str, object] = {}
+        self._is_alter_mode = False
+        self._alter_frames: list[Path] = []
+        self._alter_frame_index = 0
+        self._alter_timer: QTimer | None = None
         self._is_shutting_down = False
         self._playlist_order: list[Path] = []
         self._playlist_index: int = -1
         self._pending_autoplay_music = False
-        self._resume_music_after_transform = False
         self._supported_music_exts = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
         self._runtime_settings = QSettings("FleetSnowfluff", "Aemeath")
         # Product requirement: always start with global hide OFF each launch.
@@ -477,7 +477,7 @@ class Aemeath(QLabel):
         self.move(x, y)
 
     def _switch_idle_animation(self) -> None:
-        if self._is_hovering:
+        if self._is_hovering or self._is_alter_mode:
             return
         # step0: switch action (must differ from previous one)
         candidates = [mid for mid in self.idle_ids if mid != self._current_movie_id]
@@ -513,6 +513,8 @@ class Aemeath(QLabel):
             self._start_slow_flight()
 
     def _start_slow_flight(self) -> None:
+        if self._is_alter_mode:
+            return
         screen = QGuiApplication.primaryScreen()
         if screen is None:
             return
@@ -595,7 +597,7 @@ class Aemeath(QLabel):
         if self._flight_target is None:
             self._stop_flight()
             return
-        if self._is_hovering or self._drag_offset is not None:
+        if self._is_alter_mode or self._is_hovering or self._drag_offset is not None:
             self._stop_flight()
             return
 
@@ -1049,134 +1051,88 @@ class Aemeath(QLabel):
         self._chat_window = None
 
     def _transform_emis(self) -> None:
-        # Prefer awaiting desktop-scene transform clip when available.
-        awaiting_path = self.resources_dir / "awaiting.mov"
-        if not awaiting_path.exists():
-             awaiting_path = self.resources_dir / "awaiting.mp4"
-        use_desktop_scene_mode = awaiting_path.exists()
-
-        if use_desktop_scene_mode:
-            video_path = awaiting_path
-        else:
-            # Fallback to previous alpha-capable transform source chain.
-            candidates = [
-                self.resources_dir / "aemeath.mov",
-                self.resources_dir / "human.mov",
-                self.resources_dir / "human.mp4",
-            ]
-            video_path = next((p for p in candidates if p.exists()), candidates[-1])
-        if not video_path.exists():
-            QMessageBox.warning(self, "变身播片失败", "⚠️Waring：虚质磁暴影响，通讯受阻")
+        """Toggle: carousel gif ↔ alter PNG sequence loop (24FPS, 241 frames). Click again to switch back."""
+        if self._is_alter_mode:
+            self._exit_alter_mode()
             return
-        if not self._is_widget_alive(self._transform_window):
-            self._transform_window = TransformWindow(parent=None)
-            self._transform_window.playbackFinished.connect(self._on_transform_playback_finished)
-            self._transform_window.playbackFailed.connect(self._on_transform_playback_failed)
-        self._stop_flight()
-        if use_desktop_scene_mode:
-            screen = QGuiApplication.primaryScreen()
-            if screen is None:
-                target_geometry = self.frameGeometry()
-            else:
-                # Use full screen geometry so top letterbox can hide behind macOS menu bar.
-                target_geometry = screen.geometry()
-            self._transform_restore_fullscreen_mode = True
-        else:
-            target_geometry = self.frameGeometry()
-            scaled_w = max(1, int(target_geometry.width() * 1.5))
-            scaled_h = max(1, int(target_geometry.height() * 1.5))
-            center = target_geometry.center()
-            target_geometry = QRect(
-                center.x() - scaled_w // 2,
-                center.y() - scaled_h // 2,
-                scaled_w,
-                scaled_h,
+        alter_dir = self.resources_dir / "alter"
+        if not alter_dir.is_dir():
+            QMessageBox.warning(self, "变身播片失败", "⚠️Warning：未找到 alter 素材目录（resources/alter/）")
+            return
+        frames = self._collect_alter_frames(alter_dir)
+        if not frames:
+            QMessageBox.warning(self, "变身播片失败", "⚠️Warning：alter 目录下未找到按帧序号排列的 PNG 图片")
+            return
+        self._enter_alter_mode(frames)
+
+    def _collect_alter_frames(self, alter_dir: Path) -> list[Path]:
+        """Collect PNG files sorted by frame number (e.g. 001.png, 002.png, ..., 241.png)."""
+        pngs = list(alter_dir.glob("*.png"))
+        if not pngs:
+            return []
+
+        def frame_key(p: Path) -> int:
+            # Extract leading digits from stem: 001 -> 1, frame_001 -> 1
+            m = re.search(r"\d+", p.stem)
+            return int(m.group(0)) if m else 0
+
+        pngs.sort(key=frame_key)
+        return pngs
+
+    def _on_alter_tick(self) -> None:
+        if not self._is_alter_mode or not self._alter_frames:
+            return
+        frame_path = self._alter_frames[self._alter_frame_index]
+        pixmap = QPixmap(str(frame_path))
+        if pixmap.isNull():
+            return
+        source_size = pixmap.size()
+        if source_size.isValid():
+            scaled_size = QSize(
+                max(1, int(source_size.width() * 0.6)),
+                max(1, int(source_size.height() * 0.6)),
             )
-            self._transform_restore_fullscreen_mode = False
-        self._hide_windows_for_transform()
-        self._pause_music_for_transform()
-        self.hide()
-        transform_window = self._transform_window
-        if transform_window is None:
-            return
-        transform_window.play_media(
-            video_path,
-            target_geometry,
-            desktop_scene_mode=use_desktop_scene_mode,
-        )
+            pixmap = pixmap.scaled(
+                scaled_size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        self.setPixmap(pixmap)
+        self.resize(pixmap.size())
+        self._alter_frame_index = (self._alter_frame_index + 1) % len(self._alter_frames)
 
-    def _on_transform_window_destroyed(self) -> None:
-        self._transform_window = None
+    def _enter_alter_mode(self, frames: list[Path]) -> None:
+        self._stop_flight()
+        if self.idle_switch_timer.isActive():
+            self.idle_switch_timer.stop()
+        if self._current_movie is not None:
+            self._current_movie.stop()
+            try:
+                self._current_movie.frameChanged.disconnect(self._on_movie_frame_changed)
+            except (TypeError, RuntimeError):
+                pass
+            self._current_movie = None
+            self._current_movie_id = None
+        self._alter_frames = frames
+        self._alter_frame_index = 0
+        self._is_alter_mode = True
+        if self._alter_timer is None:
+            self._alter_timer = QTimer(self)
+            self._alter_timer.setInterval(round(1000 / 24))  # 24 FPS
+            self._alter_timer.timeout.connect(self._on_alter_tick)
+        self._alter_timer.start()
+        self._on_alter_tick()
 
-    def _on_transform_playback_finished(self) -> None:
-        if self._is_shutting_down:
+    def _exit_alter_mode(self) -> None:
+        if not self._is_alter_mode:
             return
-        self._transform_restore_fullscreen_mode = False
-        self.show()
-        self.raise_()
-        self.activateWindow()
-        self._restore_windows_after_transform()
-        self._resume_music_after_transform_if_needed()
+        self._is_alter_mode = False
+        self._alter_frames = []
+        if self._alter_timer is not None and self._alter_timer.isActive():
+            self._alter_timer.stop()
+        self.idle_switch_timer.start()
         if not self._is_hovering:
             self._set_movie(random.choice(self.idle_ids))
-
-    def _on_transform_playback_failed(self, error_text: str) -> None:
-        if self._is_shutting_down:
-            return
-        self._transform_restore_fullscreen_mode = False
-        QMessageBox.warning(
-            self,
-            "变身播片失败",
-            "⚠️Waring：虚质磁暴影响，通讯受阻",
-        )
-
-    def _hide_windows_for_transform(self) -> None:
-        state: dict[str, object] = {
-            "chat_visible": False,
-            "music_state": None,
-        }
-        chat_window = self._chat_window
-        if self._is_widget_alive(chat_window) and chat_window is not None and chat_window.isVisible():
-            state["chat_visible"] = True
-            chat_window.hide()
-        music_window = self._music_window
-        if self._is_widget_alive(music_window) and music_window is not None:
-            state["music_state"] = music_window.capture_visibility_state()
-            music_window.hide_for_transform()
-        self._hidden_windows_before_transform = state
-
-    def _restore_windows_after_transform(self) -> None:
-        if not self._hidden_windows_before_transform:
-            return
-        state = self._hidden_windows_before_transform
-        self._hidden_windows_before_transform = {}
-        chat_window = self._chat_window
-        if bool(state.get("chat_visible", False)) and self._is_widget_alive(chat_window) and chat_window is not None:
-            chat_window.show()
-            chat_window.raise_()
-            chat_window.activateWindow()
-        music_state = state.get("music_state")
-        music_window = self._music_window
-        if isinstance(music_state, dict) and self._is_widget_alive(music_window) and music_window is not None:
-            music_window.restore_after_transform(music_state)
-
-    def _pause_music_for_transform(self) -> None:
-        self._resume_music_after_transform = self._is_music_playing()
-        if self._resume_music_after_transform:
-            self._player.pause()
-            music_window = self._music_window
-            if self._is_widget_alive(music_window) and music_window is not None:
-                music_window.refresh_now_playing()
-
-    def _resume_music_after_transform_if_needed(self) -> None:
-        if not self._resume_music_after_transform:
-            return
-        self._resume_music_after_transform = False
-        if not self._player.source().isEmpty():
-            self._player.play()
-            music_window = self._music_window
-            if self._is_widget_alive(music_window) and music_window is not None:
-                music_window.refresh_now_playing()
 
     def _launch_hacker_terminal(self) -> None:
         if sys.platform == "darwin":
@@ -1480,10 +1436,7 @@ class Aemeath(QLabel):
         self._stop_flight()
         if self.idle_switch_timer.isActive():
             self.idle_switch_timer.stop()
-        transform_window = self._transform_window
-        if self._is_widget_alive(transform_window) and transform_window is not None:
-            transform_window.close()
-        self._transform_window = None
+        self._exit_alter_mode()
         chat_window = self._chat_window
         if self._is_widget_alive(chat_window) and chat_window is not None:
             chat_window.close()
@@ -1517,12 +1470,6 @@ class Aemeath(QLabel):
             event.accept()
             return True
         if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
-            transform_window = self._transform_window
-            if self._is_widget_alive(transform_window) and transform_window is not None and transform_window.isVisible():
-                # ESC exits transform animation, but should not close the app.
-                transform_window.close()
-                event.accept()
-                return True
             chat_window = self._chat_window
             if self._is_widget_alive(chat_window) and chat_window is not None:
                 if chat_window.handle_focus_escape_animation():
@@ -1535,12 +1482,18 @@ class Aemeath(QLabel):
 
     def enterEvent(self, event) -> None:
         self._is_hovering = True
+        if self._is_alter_mode:
+            super().enterEvent(event)
+            return
         self._stop_flight()
         self._set_movie(self.hover_id)
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
         self._is_hovering = False
+        if self._is_alter_mode:
+            super().leaveEvent(event)
+            return
         self._set_movie(random.choice(self.idle_ids))
         super().leaveEvent(event)
 
