@@ -1,7 +1,7 @@
 """QSS for music window, mini playlist panel, and mini player bar."""
 from __future__ import annotations
 
-from app.ui_scale import px
+from app.utils.ui_scale import px
 
 
 def build_mini_playlist_stylesheet(scale: float) -> str:

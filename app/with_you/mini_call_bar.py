@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from app.ui_scale import current_app_scale, px
+from app.utils.ui_scale import current_app_scale, px
 
 from . import styles
 from .mini_star_overlay import MiniStarOverlay

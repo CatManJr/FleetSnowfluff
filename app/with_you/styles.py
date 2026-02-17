@@ -1,8 +1,8 @@
 """Focus-mode and mini-call-bar QSS. Isolated from window logic."""
 from __future__ import annotations
 
-from app.design_tokens import focus_theme_base_tokens
-from app.ui_scale import px
+from app.utils.design_tokens import focus_theme_base_tokens
+from app.utils.ui_scale import px
 
 
 def focus_theme_tokens() -> dict[str, str]:

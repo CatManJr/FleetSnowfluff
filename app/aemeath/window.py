@@ -21,11 +21,13 @@ try:
 except ImportError:
     shiboken_is_valid = None
 
-from .chat_window import ChatWindow
-from .music_window import MusicWindow
+from app.chat_window import ChatWindow
+from app.music_window import MusicWindow
+
+from app.utils.ui_scale import current_app_scale, px
+
 from .seal_widget import SealWidget
 from .settings_dialog import SettingsDialog
-from .ui_scale import current_app_scale, px
 
 
 class Aemeath(QLabel):

@@ -6,7 +6,7 @@ from pathlib import Path
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import QApplication, QDialog, QFrame, QLineEdit, QListWidget, QListWidgetItem, QVBoxLayout
 
-from ..ui_scale import current_app_scale
+from app.utils.ui_scale import current_app_scale
 
 from . import styles
 from .types import TrackInfo

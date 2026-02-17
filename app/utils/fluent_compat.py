@@ -35,7 +35,7 @@ def init_fluent_theme() -> None:
     p = brand_palette()
     try:
         setTheme(Theme.AUTO)
-        setThemeColor(QColor(p["accent_blue"]))
+        setThemeColor(QColor(p.get("accent_blue", p["blue_400"])))
     except Exception:  # noqa: BLE001
         # Theme setup should never block window construction.
         return

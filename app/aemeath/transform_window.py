@@ -7,7 +7,7 @@ from PySide6.QtGui import QKeyEvent, QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
 from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout
 
-from .fluent_compat import init_fluent_theme
+from app.utils.fluent_compat import init_fluent_theme
 
 
 class TransformWindow(QDialog):

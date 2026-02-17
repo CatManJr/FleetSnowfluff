@@ -42,10 +42,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..fluent_compat import apply_icon_button_layout
-from ..fluent_compat import FPushButton as QPushButton
-from ..fluent_compat import init_fluent_theme
-from ..ui_scale import current_app_scale, px
+from app.utils.fluent_compat import apply_icon_button_layout
+from app.utils.fluent_compat import FPushButton as QPushButton
+from app.utils.fluent_compat import init_fluent_theme
+from app.utils.ui_scale import current_app_scale, px
 
 from .aurora import Aurora
 from .draw_canvas import DrawCanvas

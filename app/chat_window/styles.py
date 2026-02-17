@@ -1,8 +1,8 @@
 """QSS for chat window, history viewer, and history editor."""
 from __future__ import annotations
 
-from app.design_tokens import chat_theme_tokens
-from app.ui_scale import px
+from app.utils.design_tokens import chat_theme_tokens
+from app.utils.ui_scale import px
 
 
 def build_chat_stylesheet(scale: float) -> str:

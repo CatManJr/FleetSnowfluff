@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from app.qt_env import bootstrap_qt_plugin_paths, configure_qt_plugin_paths
+from app.utils.qt_env import bootstrap_qt_plugin_paths, configure_qt_plugin_paths
 
 bootstrap_qt_plugin_paths()
 
@@ -11,7 +11,7 @@ from PySide6.QtGui import QFont, QFontDatabase, QIcon
 from PySide6.QtWidgets import QApplication
 
 from app.aemeath import Aemeath
-from app.ui_scale import install_app_scale_controller
+from app.utils.ui_scale import install_app_scale_controller
 
 
 def _resolve_resources_dir() -> Path:

@@ -33,8 +33,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.design_tokens import chat_theme_tokens
-from app.ui_scale import current_app_scale, px
+from app.utils.design_tokens import chat_theme_tokens
+from app.utils.ui_scale import current_app_scale, px
 
 from .api import (
     ChatWorker,
@@ -54,7 +54,7 @@ from .styles import (
 )
 from .widgets import ChatInputBox, ChatTimelineList
 
-from app.fluent_compat import FPushButton as QPushButton, fluent_icon, init_fluent_theme
+from app.utils.fluent_compat import FPushButton as QPushButton, fluent_icon, init_fluent_theme
 from app.with_you import WithYouWindow
 
 

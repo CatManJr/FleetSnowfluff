@@ -4,7 +4,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QPushButton, QTabWidget, QTextEdit, QVBoxLayout
 
-from app.ui_scale import current_app_scale
+from app.utils.ui_scale import current_app_scale
 
 from . import styles
 from .draw_canvas import DrawCanvas

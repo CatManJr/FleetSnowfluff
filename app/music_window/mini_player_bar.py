@@ -18,8 +18,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..fluent_compat import apply_icon_button_layout
-from ..ui_scale import current_app_scale, px
+from app.utils.fluent_compat import apply_icon_button_layout
+from app.utils.ui_scale import current_app_scale, px
 
 from . import styles
 from .marquee_label import MarqueeLabel
