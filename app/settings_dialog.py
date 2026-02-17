@@ -29,6 +29,9 @@ class SettingsDialog(QDialog):
         api_key: str,
         min_jump_distance: int,
         flight_speed: int,
+        snowfluff_scale_percent: int,
+        aemeath_scale_percent: int,
+        sound_effects_enabled: bool,
         reasoning_enabled: bool,
         chat_context_turns: int,
         open_chat_history_callback: Callable[[], None] | None = None,
@@ -57,6 +60,21 @@ class SettingsDialog(QDialog):
         self.flight_speed_input.setSingleStep(1)
         self.flight_speed_input.setSuffix(" px/tick")
         self.flight_speed_input.setValue(max(1, int(flight_speed)))
+
+        self.snowfluff_scale_percent_input = QSpinBox(self)
+        self.snowfluff_scale_percent_input.setRange(0, 200)
+        self.snowfluff_scale_percent_input.setSingleStep(5)
+        self.snowfluff_scale_percent_input.setSuffix(" %")
+        self.snowfluff_scale_percent_input.setValue(max(0, min(200, int(snowfluff_scale_percent))))
+
+        self.aemeath_scale_percent_input = QSpinBox(self)
+        self.aemeath_scale_percent_input.setRange(0, 200)
+        self.aemeath_scale_percent_input.setSingleStep(5)
+        self.aemeath_scale_percent_input.setSuffix(" %")
+        self.aemeath_scale_percent_input.setValue(max(0, min(200, int(aemeath_scale_percent))))
+
+        self.sound_effects_enabled_input = QCheckBox("启用音效（开机/关机/变身语音）", self)
+        self.sound_effects_enabled_input.setChecked(bool(sound_effects_enabled))
 
         self.reasoning_enabled_input = QCheckBox("启用 Reasoning 模式（deepseek-reasoner）", self)
         self.reasoning_enabled_input.setChecked(bool(reasoning_enabled))
@@ -98,6 +116,9 @@ class SettingsDialog(QDialog):
         motion_form.setVerticalSpacing(8)
         motion_form.addRow("最短跳跃距离", self.min_jump_distance_input)
         motion_form.addRow("飞行速度", self.flight_speed_input)
+        motion_form.addRow("飞行雪绒形态尺寸（原图比例）", self.snowfluff_scale_percent_input)
+        motion_form.addRow("爱弥斯形态尺寸（原图比例）", self.aemeath_scale_percent_input)
+        motion_form.addRow("音效开关", self.sound_effects_enabled_input)
 
         chat_form = QFormLayout()
         chat_form.setHorizontalSpacing(10)
@@ -244,6 +265,15 @@ class SettingsDialog(QDialog):
 
     def flight_speed(self) -> int:
         return int(self.flight_speed_input.value())
+
+    def snowfluff_scale_percent(self) -> int:
+        return int(self.snowfluff_scale_percent_input.value())
+
+    def aemeath_scale_percent(self) -> int:
+        return int(self.aemeath_scale_percent_input.value())
+
+    def sound_effects_enabled(self) -> bool:
+        return bool(self.sound_effects_enabled_input.isChecked())
 
     def reasoning_enabled(self) -> bool:
         return bool(self.reasoning_enabled_input.isChecked())

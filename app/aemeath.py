@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QSettings, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QCursor, QDesktopServices, QGuiApplication, QIcon, QMouseEvent, QMovie, QPixmap, QTransform
@@ -57,14 +57,21 @@ class Aemeath(QLabel):
         self._music_window: MusicWindow | None = None
         self._is_alter_mode = False
         self._alter_frames: list[Path] = []
+        self._alter_pixmaps: list[QPixmap] = []
         self._alter_frame_index = 0
         self._alter_timer: QTimer | None = None
-        self._transform_sfx_player: QMediaPlayer | None = None
-        self._transform_sfx_audio: QAudioOutput | None = None
+        self._voice_sfx_player: QMediaPlayer | None = None
+        self._voice_sfx_audio: QAudioOutput | None = None
+        self._voice_finished_callback: Callable[[], None] | None = None
         self._is_shutting_down = False
+        self._quit_started = False
         self._playlist_order: list[Path] = []
         self._playlist_index: int = -1
         self._pending_autoplay_music = False
+        self._pending_resume_seek_ms = 0
+        self._last_saved_music_position_ms = -1000
+        self._last_track_path: Path | None = None
+        self._last_track_position_ms = 0
         self._supported_music_exts = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
         self._runtime_settings = QSettings("FleetSnowfluff", "Aemeath")
         # Product requirement: always start with global hide OFF each launch.
@@ -72,6 +79,9 @@ class Aemeath(QLabel):
         self._tray_icon: QSystemTrayIcon | None = None
         self._tray_focus_action: QAction | None = None
         self._focus_menu: QMenu | None = None
+        self._snowfluff_scale_percent = 80
+        self._aemeath_scale_percent = 40
+        self._sound_effects_enabled = True
 
         self._movies = {}
         self._load_movies()
@@ -109,7 +119,9 @@ class Aemeath(QLabel):
         self._focus_hide_mascot_enabled = self._load_focus_hide_mascot_enabled()
         self._ensure_resource_container()
         self._setup_audio()
+        self._load_music_resume_state()
         self._setup_menu()
+        QTimer.singleShot(120, self._play_startup_sfx)
         app = QApplication.instance()
         if app is not None:
             app.installEventFilter(self)
@@ -323,10 +335,40 @@ class Aemeath(QLabel):
             self._flight_base_speed_px = max(1, int(data.get("flight_speed_px", self._flight_base_speed_px)))
         except (TypeError, ValueError):
             pass
+        legacy_scale = data.get("mascot_scale_percent")
+        if legacy_scale is not None:
+            try:
+                legacy_clamped = max(0, min(200, int(legacy_scale)))
+                self._snowfluff_scale_percent = legacy_clamped
+                self._aemeath_scale_percent = legacy_clamped
+            except (TypeError, ValueError):
+                pass
+        try:
+            self._snowfluff_scale_percent = max(
+                0,
+                min(200, int(data.get("snowfluff_scale_percent", self._snowfluff_scale_percent))),
+            )
+        except (TypeError, ValueError):
+            pass
+        try:
+            self._aemeath_scale_percent = max(
+                0,
+                min(200, int(data.get("aemeath_scale_percent", self._aemeath_scale_percent))),
+            )
+        except (TypeError, ValueError):
+            pass
+        sound_raw = data.get("sound_effects_enabled", self._sound_effects_enabled)
+        if isinstance(sound_raw, bool):
+            self._sound_effects_enabled = sound_raw
+        elif isinstance(sound_raw, str):
+            self._sound_effects_enabled = sound_raw.strip().lower() in {"1", "true", "yes", "on"}
+        else:
+            self._sound_effects_enabled = bool(sound_raw)
         try:
             self._chat_context_turns = max(0, int(data.get("chat_context_turns", self._chat_context_turns)))
         except (TypeError, ValueError):
             pass
+        self._apply_snowfluff_scale_to_movies()
 
     def _save_config(self, *, api_key: str | None = None) -> bool:
         payload = self._read_config_json()
@@ -337,6 +379,9 @@ class Aemeath(QLabel):
                 "reasoning_enabled": self._reasoning_enabled,
                 "min_jump_distance_px": self._min_jump_distance_px,
                 "flight_speed_px": self._flight_base_speed_px,
+                "snowfluff_scale_percent": self._snowfluff_scale_percent,
+                "aemeath_scale_percent": self._aemeath_scale_percent,
+                "sound_effects_enabled": self._sound_effects_enabled,
                 "chat_context_turns": self._chat_context_turns,
             }
         )
@@ -397,6 +442,9 @@ class Aemeath(QLabel):
             api_key=self._read_api_key_from_config(),
             min_jump_distance=self._min_jump_distance_px,
             flight_speed=self._flight_base_speed_px,
+            snowfluff_scale_percent=self._snowfluff_scale_percent,
+            aemeath_scale_percent=self._aemeath_scale_percent,
+            sound_effects_enabled=self._sound_effects_enabled,
             reasoning_enabled=self._reasoning_enabled,
             chat_context_turns=self._chat_context_turns,
             open_chat_history_callback=self._open_chat_history_json_quick,
@@ -410,6 +458,9 @@ class Aemeath(QLabel):
         self._reasoning_enabled = dialog.reasoning_enabled()
         self._min_jump_distance_px = dialog.min_jump_distance()
         self._flight_base_speed_px = dialog.flight_speed()
+        self._set_snowfluff_scale_percent(dialog.snowfluff_scale_percent())
+        self._set_aemeath_scale_percent(dialog.aemeath_scale_percent())
+        self._sound_effects_enabled = dialog.sound_effects_enabled()
         self._chat_context_turns = dialog.chat_context_turns()
         if self._save_config(api_key=api_key):
             QMessageBox.information(self, "保存成功", "设置已保存，后续将自动读取。")
@@ -417,6 +468,7 @@ class Aemeath(QLabel):
         QMessageBox.warning(self, "保存失败", "无法写入配置文件，请检查目录权限。")
 
     def _load_movies(self) -> None:
+        self._movie_source_sizes: dict[int, QSize] = {}
         for idx in [*self.idle_ids, self.hover_id, self.seal_id]:
             movie_path = self.resources_dir / f"{idx}.gif"
             if not movie_path.exists():
@@ -426,12 +478,43 @@ class Aemeath(QLabel):
                 movie.jumpToFrame(0)
             source_size = movie.frameRect().size()
             if source_size.isValid():
-                scaled_size = QSize(
-                    max(1, int(source_size.width() * 0.75)),
-                    max(1, int(source_size.height() * 0.75)),
-                )
-                movie.setScaledSize(scaled_size)
+                self._movie_source_sizes[idx] = QSize(source_size.width(), source_size.height())
             self._movies[idx] = movie
+        self._apply_snowfluff_scale_to_movies()
+
+    def _scaled_size_by_percent(self, source_size: QSize, percent: int) -> QSize:
+        clamped = max(0, min(200, int(percent)))
+        ratio = clamped / 100.0
+        return QSize(
+            max(1, int(round(source_size.width() * ratio))),
+            max(1, int(round(source_size.height() * ratio))),
+        )
+
+    def _apply_snowfluff_scale_to_movies(self) -> None:
+        for movie_id, movie in self._movies.items():
+            source_size = self._movie_source_sizes.get(movie_id)
+            if source_size is None or not source_size.isValid():
+                continue
+            movie.setScaledSize(self._scaled_size_by_percent(source_size, self._snowfluff_scale_percent))
+
+    def _set_snowfluff_scale_percent(self, percent: int) -> None:
+        clamped = max(0, min(200, int(percent)))
+        if clamped == self._snowfluff_scale_percent:
+            return
+        self._snowfluff_scale_percent = clamped
+        self._apply_snowfluff_scale_to_movies()
+        if not self._is_alter_mode:
+            self._on_movie_frame_changed()
+
+    def _set_aemeath_scale_percent(self, percent: int) -> None:
+        clamped = max(0, min(200, int(percent)))
+        if clamped == self._aemeath_scale_percent:
+            return
+        self._aemeath_scale_percent = clamped
+        if self._is_alter_mode:
+            self._rebuild_alter_pixmaps()
+            if self._alter_pixmaps:
+                self._on_alter_tick()
 
     def _set_movie(self, movie_id: int) -> None:
         if self._current_movie_id == movie_id:
@@ -690,6 +773,20 @@ class Aemeath(QLabel):
         self._player = QMediaPlayer(self)
         self._player.setAudioOutput(self._audio_output)
         self._player.mediaStatusChanged.connect(self._on_media_status_changed)
+        self._player.positionChanged.connect(self._on_music_position_changed)
+
+    def _load_music_resume_state(self) -> None:
+        raw_track = self._runtime_settings.value("audio/last_track_path", "")
+        self._last_track_path = Path(raw_track) if isinstance(raw_track, str) and raw_track else None
+        raw_pos = self._runtime_settings.value("audio/last_track_position_ms", 0)
+        try:
+            self._last_track_position_ms = max(0, int(raw_pos))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            self._last_track_position_ms = 0
+
+    def _persist_music_resume_state(self, *, track: Path | None, position_ms: int) -> None:
+        self._runtime_settings.setValue("audio/last_track_path", str(track) if track is not None else "")
+        self._runtime_settings.setValue("audio/last_track_position_ms", max(0, int(position_ms)))
 
     def _load_music_volume_percent(self) -> int:
         raw = self._runtime_settings.value("audio/music_volume_percent", 70)
@@ -1070,24 +1167,66 @@ class Aemeath(QLabel):
         QTimer.singleShot(1000, lambda: self._enter_alter_mode(frames))
 
     def _play_transform_sfx(self) -> None:
-        """Play resources/transform.MP3 when entering alter mode."""
-        candidates = (
-            self.resources_dir / "transform.MP3",
-            self.resources_dir / "transform.mp3",
-            self.resources_dir / "trasform.MP3",
-            self.resources_dir / "trasform.mp3",
+        """Play transform voice."""
+        self._play_voice_sfx(
+            (
+                self.resources_dir / "transform.MP3",
+                self.resources_dir / "transform.mp3",
+                self.resources_dir / "trasform.MP3",
+                self.resources_dir / "trasform.mp3",
+            )
         )
+
+    def _play_startup_sfx(self) -> None:
+        self._play_voice_sfx((self.resources_dir / "register.MP3", self.resources_dir / "register.mp3"))
+
+    def _play_shutdown_sfx(self, *, on_finished: Callable[[], None] | None = None) -> bool:
+        return self._play_voice_sfx(
+            (self.resources_dir / "bonvoyage.MP3", self.resources_dir / "bonvoyage.mp3"),
+            on_finished=on_finished,
+        )
+
+    def _ensure_voice_sfx_player(self) -> None:
+        if self._voice_sfx_player is not None:
+            return
+        self._voice_sfx_audio = QAudioOutput(self)
+        self._voice_sfx_audio.setVolume(1.0)
+        self._voice_sfx_player = QMediaPlayer(self)
+        self._voice_sfx_player.setAudioOutput(self._voice_sfx_audio)
+        self._voice_sfx_player.mediaStatusChanged.connect(self._on_voice_sfx_media_status_changed)
+
+    def _on_voice_sfx_media_status_changed(self, status) -> None:
+        if status == QMediaPlayer.MediaStatus.EndOfMedia:
+            self._run_voice_finished_callback()
+
+    def _run_voice_finished_callback(self) -> None:
+        callback = self._voice_finished_callback
+        self._voice_finished_callback = None
+        if callback is not None:
+            callback()
+
+    def _play_voice_sfx(
+        self,
+        candidates: tuple[Path, ...],
+        *,
+        on_finished: Callable[[], None] | None = None,
+    ) -> bool:
+        if not self._sound_effects_enabled:
+            return False
         path = next((p for p in candidates if p.exists()), None)
         if path is None:
-            return
-        if self._transform_sfx_player is None:
-            self._transform_sfx_audio = QAudioOutput(self)
-            self._transform_sfx_audio.setVolume(1.0)
-            self._transform_sfx_player = QMediaPlayer(self)
-            self._transform_sfx_player.setAudioOutput(self._transform_sfx_audio)
-        self._transform_sfx_player.stop()
-        self._transform_sfx_player.setSource(QUrl.fromLocalFile(str(path)))
-        self._transform_sfx_player.play()
+            return False
+        self._ensure_voice_sfx_player()
+        player = self._voice_sfx_player
+        if player is None:
+            return False
+        self._voice_finished_callback = None
+        player.stop()
+        player.setSource(QUrl.fromLocalFile(str(path)))
+        player.play()
+        if on_finished is not None:
+            self._voice_finished_callback = on_finished
+        return True
 
     def _collect_alter_frames(self, alter_dir: Path) -> list[Path]:
         """Collect PNG files sorted by frame number (e.g. 001.png, 002.png, ..., 241.png)."""
@@ -1104,26 +1243,30 @@ class Aemeath(QLabel):
         return pngs
 
     def _on_alter_tick(self) -> None:
-        if not self._is_alter_mode or not self._alter_frames:
+        if not self._is_alter_mode or not self._alter_pixmaps:
             return
-        frame_path = self._alter_frames[self._alter_frame_index]
-        pixmap = QPixmap(str(frame_path))
-        if pixmap.isNull():
-            return
-        source_size = pixmap.size()
-        if source_size.isValid():
-            scaled_size = QSize(
-                max(1, int(source_size.width() * 0.3)),
-                max(1, int(source_size.height() * 0.3)),
-            )
-            pixmap = pixmap.scaled(
-                scaled_size,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
+        pixmap = self._alter_pixmaps[self._alter_frame_index]
         self.setPixmap(pixmap)
-        self.resize(pixmap.size())
-        self._alter_frame_index = (self._alter_frame_index + 1) % len(self._alter_frames)
+        if self.size() != pixmap.size():
+            self.resize(pixmap.size())
+        self._alter_frame_index = (self._alter_frame_index + 1) % len(self._alter_pixmaps)
+
+    def _rebuild_alter_pixmaps(self) -> None:
+        self._alter_pixmaps = []
+        for frame_path in self._alter_frames:
+            pixmap = QPixmap(str(frame_path))
+            if pixmap.isNull():
+                continue
+            source_size = pixmap.size()
+            if source_size.isValid():
+                pixmap = pixmap.scaled(
+                    self._scaled_size_by_percent(source_size, self._aemeath_scale_percent),
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            self._alter_pixmaps.append(pixmap)
+        if self._alter_frame_index >= len(self._alter_pixmaps):
+            self._alter_frame_index = 0
 
     def _enter_alter_mode(self, frames: list[Path]) -> None:
         self._stop_flight()
@@ -1138,6 +1281,9 @@ class Aemeath(QLabel):
             self._current_movie = None
             self._current_movie_id = None
         self._alter_frames = frames
+        self._rebuild_alter_pixmaps()
+        if not self._alter_pixmaps:
+            return
         self._alter_frame_index = 0
         self._is_alter_mode = True
         if self._alter_timer is None:
@@ -1162,6 +1308,7 @@ class Aemeath(QLabel):
             return
         self._is_alter_mode = False
         self._alter_frames = []
+        self._alter_pixmaps = []
         if self._alter_timer is not None and self._alter_timer.isActive():
             self._alter_timer.stop()
         self.idle_switch_timer.start()
@@ -1230,7 +1377,8 @@ class Aemeath(QLabel):
         if not self._pending_autoplay_music:
             return
         self._pending_autoplay_music = False
-        self._start_random_loop()
+        if not self._resume_last_music():
+            self._start_random_loop()
 
     def _music_dir(self) -> Path:
         self._ensure_resource_container()
@@ -1270,13 +1418,28 @@ class Aemeath(QLabel):
         self._playlist_order = tracks[:]
         random.shuffle(self._playlist_order)
         self._playlist_index = 0
-        self._play_current_playlist_track()
+        self._play_current_playlist_track(start_position_ms=0)
         return True
 
-    def _play_current_playlist_track(self) -> None:
+    def _resume_last_music(self) -> bool:
+        tracks = self._list_music_tracks()
+        if not tracks or self._last_track_path is None:
+            return False
+        if self._last_track_path not in tracks:
+            return False
+        remainder = [t for t in tracks if t != self._last_track_path]
+        random.shuffle(remainder)
+        self._playlist_order = [self._last_track_path, *remainder]
+        self._playlist_index = 0
+        self._play_current_playlist_track(start_position_ms=self._last_track_position_ms)
+        return True
+
+    def _play_current_playlist_track(self, *, start_position_ms: int = 0) -> None:
         if not self._playlist_order or self._playlist_index < 0:
             return
         track = self._playlist_order[self._playlist_index]
+        self._pending_resume_seek_ms = max(0, int(start_position_ms))
+        self._persist_music_resume_state(track=track, position_ms=self._pending_resume_seek_ms)
         self._player.setSource(QUrl.fromLocalFile(str(track)))
         self._player.play()
         music_window = self._music_window
@@ -1290,7 +1453,7 @@ class Aemeath(QLabel):
                 return
             return
         self._playlist_index = (self._playlist_index + 1) % len(self._playlist_order)
-        self._play_current_playlist_track()
+        self._play_current_playlist_track(start_position_ms=0)
 
     def _play_prev_track(self) -> None:
         if not self._playlist_order:
@@ -1298,7 +1461,7 @@ class Aemeath(QLabel):
                 return
             return
         self._playlist_index = (self._playlist_index - 1) % len(self._playlist_order)
-        self._play_current_playlist_track()
+        self._play_current_playlist_track(start_position_ms=0)
 
     def _play_selected_track(self, track_path: Path) -> None:
         tracks = self._list_music_tracks()
@@ -1310,7 +1473,7 @@ class Aemeath(QLabel):
         random.shuffle(remainder)
         self._playlist_order = [track_path, *remainder]
         self._playlist_index = 0
-        self._play_current_playlist_track()
+        self._play_current_playlist_track(start_position_ms=0)
 
     def _toggle_music_play_pause(self) -> None:
         if self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
@@ -1346,11 +1509,25 @@ class Aemeath(QLabel):
         self._persist_music_volume_percent(clamped)
 
     def _on_media_status_changed(self, status) -> None:
+        if status == QMediaPlayer.MediaStatus.LoadedMedia and self._pending_resume_seek_ms > 0:
+            self._player.setPosition(self._pending_resume_seek_ms)
+            self._pending_resume_seek_ms = 0
         if status == QMediaPlayer.MediaStatus.EndOfMedia:
             self._play_next_track()
             music_window = self._music_window
             if self._is_widget_alive(music_window) and music_window is not None:
                 music_window.refresh_now_playing()
+
+    def _on_music_position_changed(self, position: int) -> None:
+        track = self._current_track()
+        if track is None:
+            return
+        if abs(int(position) - self._last_saved_music_position_ms) < 1000:
+            return
+        self._last_saved_music_position_ms = int(position)
+        self._last_track_path = track
+        self._last_track_position_ms = max(0, int(position))
+        self._persist_music_resume_state(track=track, position_ms=self._last_track_position_ms)
 
     def _current_track(self) -> Path | None:
         if not self._playlist_order or self._playlist_index < 0:
@@ -1360,6 +1537,9 @@ class Aemeath(QLabel):
         return self._playlist_order[self._playlist_index]
 
     def _stop_music_playback(self) -> None:
+        track = self._current_track()
+        if track is not None:
+            self._persist_music_resume_state(track=track, position_ms=self._music_position_ms())
         self._player.stop()
         self._playlist_order = []
         self._playlist_index = -1
@@ -1467,6 +1647,20 @@ class Aemeath(QLabel):
         self._pending_autoplay_music = False
 
     def _quit_app(self) -> None:
+        if self._quit_started:
+            return
+        self._quit_started = True
+        if self._sound_effects_enabled:
+            if self._play_shutdown_sfx(on_finished=self._finalize_quit_app):
+                return
+            self._quit_started = False
+            QMessageBox.warning(self, "关机音效缺失", "已开启音效，但未找到 bonvoyage.mp3，取消关机。")
+            return
+        self._finalize_quit_app()
+
+    def _finalize_quit_app(self) -> None:
+        if self._is_shutting_down:
+            return
         self._is_shutting_down = True
         # Reset global hide preference for next launch (default OFF).
         self._runtime_settings.setValue("focus/hide_mascot_enabled", False)
@@ -1491,6 +1685,10 @@ class Aemeath(QLabel):
             app.quit()
 
     def closeEvent(self, event) -> None:
+        if not self._is_shutting_down:
+            event.ignore()
+            self._quit_app()
+            return
         self._is_shutting_down = True
         # Reset global hide preference for next launch (default OFF).
         self._runtime_settings.setValue("focus/hide_mascot_enabled", False)
