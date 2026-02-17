@@ -9,17 +9,20 @@ from .design_tokens import brand_palette
 FLUENT_AVAILABLE = False
 
 try:
-    from qfluentwidgets import PushButton as _FluentPushButton
+    from qfluentwidgets import PushButton as _QFluentPushButton
     from qfluentwidgets import Theme, setTheme, setThemeColor
     from qfluentwidgets import FluentIcon as FIF
 
     FLUENT_AVAILABLE = True
 except Exception:  # noqa: BLE001
-    _FluentPushButton = QPushButton
+    _QFluentPushButton = QPushButton
     Theme = None
     setTheme = None
     setThemeColor = None
     FIF = None
+
+# Keep native QPushButton painting so app-level QSS backgrounds/borders are reliable.
+_FluentPushButton = QPushButton
 
 
 class FPushButton(_FluentPushButton):
@@ -70,7 +73,11 @@ def apply_icon_button_layout(
         button.setMaximumSize(edge, edge)
         button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
     button.setIconSize(QSize(icon_size, icon_size))
-    button.setStyleSheet("padding: 0px; margin: 0px; text-align: center;")
+    # Keep global/theme QSS intact; only refresh style after property/icon changes.
+    style = button.style()
+    if style is not None:
+        style.unpolish(button)
+        style.polish(button)
 
 
 def rounded_icon(icon: QIcon, *, edge: int = 18, radius_ratio: float = 0.28) -> QIcon:
