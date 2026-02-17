@@ -59,6 +59,8 @@ class Aemeath(QLabel):
         self._alter_frames: list[Path] = []
         self._alter_frame_index = 0
         self._alter_timer: QTimer | None = None
+        self._transform_sfx_player: QMediaPlayer | None = None
+        self._transform_sfx_audio: QAudioOutput | None = None
         self._is_shutting_down = False
         self._playlist_order: list[Path] = []
         self._playlist_index: int = -1
@@ -1063,7 +1065,29 @@ class Aemeath(QLabel):
         if not frames:
             QMessageBox.warning(self, "变身播片失败", "⚠️Warning：alter 目录下未找到按帧序号排列的 PNG 图片")
             return
-        self._enter_alter_mode(frames)
+        self.hide()
+        self._play_transform_sfx()
+        QTimer.singleShot(1000, lambda: self._enter_alter_mode(frames))
+
+    def _play_transform_sfx(self) -> None:
+        """Play resources/transform.MP3 when entering alter mode."""
+        candidates = (
+            self.resources_dir / "transform.MP3",
+            self.resources_dir / "transform.mp3",
+            self.resources_dir / "trasform.MP3",
+            self.resources_dir / "trasform.mp3",
+        )
+        path = next((p for p in candidates if p.exists()), None)
+        if path is None:
+            return
+        if self._transform_sfx_player is None:
+            self._transform_sfx_audio = QAudioOutput(self)
+            self._transform_sfx_audio.setVolume(1.0)
+            self._transform_sfx_player = QMediaPlayer(self)
+            self._transform_sfx_player.setAudioOutput(self._transform_sfx_audio)
+        self._transform_sfx_player.stop()
+        self._transform_sfx_player.setSource(QUrl.fromLocalFile(str(path)))
+        self._transform_sfx_player.play()
 
     def _collect_alter_frames(self, alter_dir: Path) -> list[Path]:
         """Collect PNG files sorted by frame number (e.g. 001.png, 002.png, ..., 241.png)."""
@@ -1089,8 +1113,8 @@ class Aemeath(QLabel):
         source_size = pixmap.size()
         if source_size.isValid():
             scaled_size = QSize(
-                max(1, int(source_size.width() * 0.6)),
-                max(1, int(source_size.height() * 0.6)),
+                max(1, int(source_size.width() * 0.3)),
+                max(1, int(source_size.height() * 0.3)),
             )
             pixmap = pixmap.scaled(
                 scaled_size,
@@ -1122,8 +1146,18 @@ class Aemeath(QLabel):
             self._alter_timer.timeout.connect(self._on_alter_tick)
         self._alter_timer.start()
         self._on_alter_tick()
+        self.show()
+        self.raise_()
+        self.activateWindow()
 
     def _exit_alter_mode(self) -> None:
+        if not self._is_alter_mode:
+            return
+        self.hide()
+        self._play_transform_sfx()
+        QTimer.singleShot(500, self._do_exit_alter_mode)
+
+    def _do_exit_alter_mode(self) -> None:
         if not self._is_alter_mode:
             return
         self._is_alter_mode = False
@@ -1133,6 +1167,9 @@ class Aemeath(QLabel):
         self.idle_switch_timer.start()
         if not self._is_hovering:
             self._set_movie(random.choice(self.idle_ids))
+        self.show()
+        self.raise_()
+        self.activateWindow()
 
     def _launch_hacker_terminal(self) -> None:
         if sys.platform == "darwin":
@@ -1436,7 +1473,7 @@ class Aemeath(QLabel):
         self._stop_flight()
         if self.idle_switch_timer.isActive():
             self.idle_switch_timer.stop()
-        self._exit_alter_mode()
+        self._do_exit_alter_mode()
         chat_window = self._chat_window
         if self._is_widget_alive(chat_window) and chat_window is not None:
             chat_window.close()

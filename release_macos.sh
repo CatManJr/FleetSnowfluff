@@ -7,7 +7,7 @@ set -euo pipefail
 #
 # Usage:
 #   ./release_macos.sh
-#   ./release_macos.sh v1.2.0beta1
+#   ./release_macos.sh v1.2.0beta
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "This script only supports macOS."
@@ -31,10 +31,10 @@ import tomllib
 
 pyproject = Path("pyproject.toml")
 if not pyproject.exists():
-      print("v1.2.0beta1")
+      print("v1.2.0beta")
 else:
     data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    print(data.get("project", {}).get("version", "v1.2.0beta1"))
+    print(data.get("project", {}).get("version", "v1.2.0beta"))
 PY
 )"
 fi
