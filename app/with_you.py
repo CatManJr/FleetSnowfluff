@@ -118,6 +118,7 @@ class Aurora(QWidget):
         self._target_hold_frames = random.randint(140, 220)
         self._star_count = 72
         self._stars: list[dict[str, float]] = []
+        self._thick_prev: list[float] = []
         self._timer = QTimer(self)
         self._timer.setInterval(33)
         self._timer.timeout.connect(self._on_tick)
@@ -169,6 +170,7 @@ class Aurora(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        self._thick_prev = []
         self._seed_stars(force=True)
 
     def _seed_stars(self, *, force: bool = False) -> None:
@@ -258,7 +260,15 @@ class Aurora(QWidget):
                 + 0.06 * math.sin((ratio * 11.0) + (t * 0.002))
             )
             thick_ratio = aurora["width"] * (0.58 + thick_boost)
-            thick = max(0, 0.4 * h, thick_ratio * h)
+            # Coherent flowing thickness field: random-like, but with temporal continuity.
+            flow_field = (
+                0.1
+                + 0.5 * math.sin((ratio * 4.0) + (t * 0.010) + aurora["shift"] * 0.85)
+                + 0.24 * math.sin((ratio * 8.6) - (t * 0.006) + aurora["shift"] * 1.7)
+                + 0.14 * math.sin((ratio * 14.0) + (t * 0.004))
+            )
+            flow_norm = max(0.0, min(1.0, flow_field))
+            thick = max(0.08 * h, ((0.10 + 0.70 * flow_norm) * h), thick_ratio * h)
             # Keep upper edge within sky area (above setting panel), but with a more irregular, organic cap.
             cap_wave = (
                 4.0
@@ -272,6 +282,15 @@ class Aurora(QWidget):
             upper_raw.append(upper)
             thick_values.append(thick)
             sky_floors.append(sky_floor)
+
+        # Temporal smoothing for random thickness: keep organic variation,
+        # but avoid frame-to-frame flicker.
+        if len(self._thick_prev) != len(thick_values):
+            self._thick_prev = thick_values[:]
+        else:
+            for i, current in enumerate(thick_values):
+                self._thick_prev[i] = self._thick_prev[i] * 0.72 + current * 0.28
+        thick_values = self._thick_prev[:]
 
         # Smooth upper edge to avoid narrow pointy crests.
         upper_smooth = upper_raw[:]
@@ -363,11 +382,12 @@ class Aurora(QWidget):
         y_max = max(max(y for _, y in upper_points), max(y for _, y in lower_points))
         # Aurora hue by wavelength feeling: top pink, bottom green.
         grad = QLinearGradient(0.0, y_min, 0.0, y_max)
-        grad.setColorAt(0.00, QColor(255, 168, 230, 0))
-        grad.setColorAt(0.20, QColor(255, 156, 224, int(alpha_core * 0.52)))
-        grad.setColorAt(0.50, QColor(255, 145, 214, int(alpha_core * 0.98)))
-        grad.setColorAt(0.80, QColor(122, 255, 201, int(alpha_core * 0.62)))
-        grad.setColorAt(1.00, QColor(114, 255, 196, 0))
+        grad.setColorAt(0.00, QColor(255, 168, 230, 0))  # 顶部透明粉色
+        grad.setColorAt(0.18, QColor(255, 156, 224, int(alpha_core * 0.48)))  # 上部粉色
+        grad.setColorAt(0.30, QColor(212, 178, 198, int(alpha_core * 0.76)))  # 过渡到绿色的粉色
+        grad.setColorAt(0.56, QColor(173, 255, 204, int(alpha_core * 0.92)))  # 中部清新绿，贴近极光
+        grad.setColorAt(0.75, QColor(56, 229, 224, int(alpha_core * 0.57)))   # 绿色-青色（真实极光主色）
+        grad.setColorAt(1.00, QColor(29, 190, 216, 0))   # 底部透明蓝青，真实极光底部淡出
         painter.fillPath(path, grad)
 
         halo_pen = QPen(QColor(255, 180, 232, int(alpha_core * 0.22)))
