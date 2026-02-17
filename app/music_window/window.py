@@ -128,7 +128,7 @@ class MusicWindow(QDialog):
         self._refresh_timer.start()
 
         self._progress_timer = QTimer(self)
-        self._progress_timer.setInterval(220)
+        self._progress_timer.setInterval(350)
         self._progress_timer.timeout.connect(self._update_progress_ui)
         self._progress_timer.start()
 

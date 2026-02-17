@@ -75,6 +75,9 @@ class Aemeath(QLabel):
         self._alter_video_anchor_count: int = 0
         self._alter_video_last_pixmap: QPixmap | None = None
         self._alter_video_first_pixmap: QPixmap | None = None
+        self._last_movie_frame_ui_ts = 0.0
+        self._last_alter_video_frame_ts = 0.0
+        self._movie_frame_interval_s = 1.0 / 30.0  # 限流：最多 30 FPS 更新 UI
         self._voice_sfx_player: QMediaPlayer | None = None
         self._voice_sfx_audio: QAudioOutput | None = None
         self._voice_finished_callback: Callable[[], None] | None = None
@@ -113,7 +116,7 @@ class Aemeath(QLabel):
         self.setMouseTracking(True)
 
         self._flight_timer = QTimer(self)
-        self._flight_timer.setInterval(58)
+        self._flight_timer.setInterval(66)
         self._flight_timer.timeout.connect(self._on_flight_tick)
         self._flight_target: QPoint | None = None
         self._min_jump_distance_px = 120
@@ -559,10 +562,15 @@ class Aemeath(QLabel):
     def _on_movie_frame_changed(self, *_args) -> None:
         if self._current_movie is None:
             return
+        if not self.isVisible():
+            return
+        now = time.monotonic()
+        if (now - self._last_movie_frame_ui_ts) < self._movie_frame_interval_s:
+            return
+        self._last_movie_frame_ui_ts = now
         frame: QPixmap = self._current_movie.currentPixmap()
         if frame.isNull():
             return
-
         if self._mirror_h:
             frame = frame.transformed(QTransform().scale(-1, 1))
         self.setPixmap(frame)
@@ -972,6 +980,10 @@ class Aemeath(QLabel):
 
         self._visibility_suppressed = should_hide
         if should_hide:
+            if self.idle_switch_timer.isActive():
+                self.idle_switch_timer.stop()
+            if self._current_movie is not None and not self._alter_video_mode:
+                self._current_movie.setPaused(True)
             if self.isVisible():
                 self.hide()
             for seal in self._seal_widgets:
@@ -981,6 +993,10 @@ class Aemeath(QLabel):
                 self._print_terminal_greeting()
             return
 
+        if self._current_movie is not None and not self._alter_video_mode:
+            self._current_movie.setPaused(False)
+        if not self.idle_switch_timer.isActive() and not self._is_alter_mode:
+            self.idle_switch_timer.start()
         self.show()
         self.raise_()
         for seal in self._seal_widgets:
@@ -1250,6 +1266,10 @@ class Aemeath(QLabel):
     def _on_alter_video_frame(self, frame) -> None:
         if not self._alter_video_mode or not frame.isValid():
             return
+        now = time.monotonic()
+        if (now - self._last_alter_video_frame_ts) < self._movie_frame_interval_s:
+            return
+        self._last_alter_video_frame_ts = now
         image = frame.toImage()
         if image.isNull():
             return
@@ -1413,7 +1433,7 @@ class Aemeath(QLabel):
         self._is_alter_mode = True
         if self._alter_timer is None:
             self._alter_timer = QTimer(self)
-            self._alter_timer.setInterval(round(1000 / 24))  # 24 FPS
+            self._alter_timer.setInterval(50)  # 20 FPS，减轻 CPU
             self._alter_timer.timeout.connect(self._on_alter_tick)
         self._alter_timer.start()
         self._on_alter_tick()
@@ -1828,7 +1848,7 @@ class Aemeath(QLabel):
         if app is not None:
             app.quit()
             # 若事件循环因计时器/线程等未在限定时间内退出，强制结束进程，避免残留进程影响下次 uv 使用 .venv
-            QTimer.singleShot(3000, _force_exit_if_still_running)
+            QTimer.singleShot(1500, _force_exit_if_still_running)
 
     def closeEvent(self, event) -> None:
         if not self._is_shutting_down:

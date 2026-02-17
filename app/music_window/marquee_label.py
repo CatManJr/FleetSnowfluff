@@ -14,7 +14,7 @@ class MarqueeLabel(QLabel):
         self._gap = 36
         self._scroll_speed_px = 1
         self._timer = QTimer(self)
-        self._timer.setInterval(50)
+        self._timer.setInterval(70)
         self._timer.timeout.connect(self._tick)
 
     def setMarqueeText(self, text: str) -> None:
