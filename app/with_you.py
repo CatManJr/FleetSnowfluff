@@ -1791,7 +1791,8 @@ class WithYouWindow(QDialog):
             return
         base = max(0.0, min(1.0, self._bgm_volume_slider.value() / 100.0))
         target = base
-        if self._is_video_audio_active():
+        # Only duck when playing a one-shot voice clip (start/break/end), not the looped withyou video or when in config
+        if self._phase == "running" and self._is_video_audio_active() and not self._loop_video:
             target = base * self._bgm_ducking_ratio
         self._bgm_audio.setVolume(max(0.0, min(1.0, target)))
 
