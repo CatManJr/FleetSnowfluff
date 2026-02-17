@@ -44,7 +44,9 @@ class MiniPlayerBar(QDialog):
         seek_position_ms_fn,
         get_volume_percent_fn,
         set_volume_percent_fn,
-        icon_dir: Path | None,
+        single_repeat_getter=None,
+        toggle_single_repeat_fn=None,
+        icon_dir: Path | None = None,
     ) -> None:
         super().__init__(None)
         self._toggle_play_pause_fn = toggle_play_pause_fn
@@ -61,6 +63,8 @@ class MiniPlayerBar(QDialog):
         self._seek_position_ms_fn = seek_position_ms_fn
         self._get_volume_percent_fn = get_volume_percent_fn
         self._set_volume_percent_fn = set_volume_percent_fn
+        self._single_repeat_getter = single_repeat_getter or (lambda: False)
+        self._toggle_single_repeat_fn = toggle_single_repeat_fn or (lambda: None)
         self._icon_dir = icon_dir
         self._settings = QSettings("FleetSnowfluff", "MusicWindow")
         self._drag_offset: QPoint | None = None
@@ -108,6 +112,11 @@ class MiniPlayerBar(QDialog):
         self.next_button.setToolTip("下一首")
         self.next_button.clicked.connect(self._on_next_clicked)
 
+        self.repeat_button = QPushButton("")
+        self.repeat_button.setObjectName("miniBtn")
+        self.repeat_button.setToolTip("单曲循环")
+        self.repeat_button.clicked.connect(self._on_repeat_clicked)
+
         self.playlist_button = QPushButton("")
         self.playlist_button.setObjectName("miniBtn")
         self.playlist_button.setToolTip("播放列表")
@@ -152,6 +161,7 @@ class MiniPlayerBar(QDialog):
         top_row.addWidget(self.prev_button)
         top_row.addWidget(self.play_button)
         top_row.addWidget(self.next_button)
+        top_row.addWidget(self.repeat_button)
         top_row.addWidget(self.playlist_button)
         top_row.addWidget(self.volume_button)
         top_row.addWidget(self.restore_button)
@@ -194,6 +204,7 @@ class MiniPlayerBar(QDialog):
             "play": ("play.png", "ic_play.png"),
             "pause": ("pause.png", "ic_pause.png"),
             "next": ("skip.png", "next.png", "ic_next.png"),
+            "repeat": ("repeat.png", "repeat_one.png", "loop.png", "ic_repeat.png"),
             "playlist": ("playlist.png", "list.png", "menu.png", "ic_playlist.png"),
             "volume": ("volume.png", "ic_volume.png"),
             "expand": ("expand.png", "exitfull.png", "ic_expand.png"),
@@ -224,6 +235,13 @@ class MiniPlayerBar(QDialog):
         else:
             self.next_button.setProperty("iconOnly", False)
             self.next_button.setText("⏭")
+        if "repeat" in self._icons:
+            self.repeat_button.setIcon(self._icons["repeat"])
+            apply_icon_button_layout(self.repeat_button, icon_size=icon_size, edge_padding=22, min_edge=self._px(44), set_fixed=False)
+        else:
+            self.repeat_button.setProperty("iconOnly", False)
+            self.repeat_button.setText("🔁")
+        self._sync_repeat_button()
         if "playlist" in self._icons:
             self.playlist_button.setIcon(self._icons["playlist"])
             apply_icon_button_layout(self.playlist_button, icon_size=icon_size, edge_padding=22, min_edge=self._px(44), set_fixed=False)
@@ -255,6 +273,15 @@ class MiniPlayerBar(QDialog):
         self._play_next_fn()
         self.refresh_state()
 
+    def _on_repeat_clicked(self) -> None:
+        self._toggle_single_repeat_fn()
+        self._sync_repeat_button()
+
+    def _sync_repeat_button(self) -> None:
+        on = self._single_repeat_getter()
+        self.repeat_button.setDown(on)
+        self.repeat_button.setToolTip("单曲循环 (开)" if on else "单曲循环")
+
     def refresh_state(self) -> None:
         current = self._current_track_fn()
         if current is None:
@@ -263,6 +290,7 @@ class MiniPlayerBar(QDialog):
             info = self._extract_track_info_fn(current)
             label_text = f"{info.title} · {info.artist}"
         self.track_label.setMarqueeText(label_text)
+        self._sync_repeat_button()
         is_playing = self._is_playing_fn()
         if is_playing and "pause" in self._icons:
             self.play_button.setIcon(self._icons["pause"])

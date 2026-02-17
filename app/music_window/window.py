@@ -70,6 +70,8 @@ class MusicWindow(QDialog):
         get_volume_percent_fn,
         set_volume_percent_fn,
         stop_playback_fn,
+        single_repeat_getter=None,
+        toggle_single_repeat_fn=None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -91,6 +93,8 @@ class MusicWindow(QDialog):
         self._get_volume_percent_fn = get_volume_percent_fn
         self._set_volume_percent_fn = set_volume_percent_fn
         self._stop_playback_fn = stop_playback_fn
+        self._single_repeat_getter = single_repeat_getter or (lambda: False)
+        self._toggle_single_repeat_fn = toggle_single_repeat_fn or (lambda: None)
         self._tracks: list[Path] = []
         self._track_infos: list[TrackInfo] = []
         self._mini_bar: MiniPlayerBar | None = None
@@ -154,6 +158,8 @@ class MusicWindow(QDialog):
                 seek_position_ms_fn=self._seek_position_ms_fn,
                 get_volume_percent_fn=self._get_volume_percent_fn,
                 set_volume_percent_fn=self._set_volume_percent_fn,
+                single_repeat_getter=self._single_repeat_getter,
+                toggle_single_repeat_fn=self._toggle_single_repeat_fn,
                 icon_dir=self._icon_dir,
             )
         return self._mini_bar
@@ -169,6 +175,7 @@ class MusicWindow(QDialog):
             "pause": ("pause.png", "ic_pause.png"),
             "next": ("skip.png", "next.png", "ic_next.png"),
             "random": ("random.png", "shuffle.png", "ic_random.png"),
+            "repeat": ("repeat.png", "repeat_one.png", "loop.png", "ic_repeat.png"),
             "volume": ("volume.png", "ic_volume.png"),
             "expand": ("expand.png", "exitfull.png", "ic_expand.png"),
         }
@@ -382,6 +389,10 @@ class MusicWindow(QDialog):
         self.random_button.setObjectName("actionBtn")
         self.random_button.setToolTip("重新随机排序")
         self.random_button.clicked.connect(self._on_random_clicked)
+        self.repeat_button = QPushButton("")
+        self.repeat_button.setObjectName("actionBtn")
+        self.repeat_button.setToolTip("单曲循环")
+        self.repeat_button.clicked.connect(self._on_repeat_clicked)
 
         ctrl_row.addWidget(self.import_button)
         ctrl_row.addWidget(self.remove_button)
@@ -389,6 +400,7 @@ class MusicWindow(QDialog):
         ctrl_row.addWidget(self.prev_button)
         ctrl_row.addWidget(self.play_button)
         ctrl_row.addWidget(self.next_button)
+        ctrl_row.addWidget(self.repeat_button)
         ctrl_row.addStretch(1)
         ctrl_row.addWidget(self.random_button)
 
@@ -420,7 +432,7 @@ class MusicWindow(QDialog):
         action_w = px(48, scale)
         action_h = px(40, scale)
         main_btn = px(48, scale)
-        for btn in (self.import_button, self.remove_button, self.prev_button, self.next_button, self.random_button):
+        for btn in (self.import_button, self.remove_button, self.prev_button, self.next_button, self.repeat_button, self.random_button):
             btn.setFixedSize(action_w, action_h)
         self.play_button.setFixedSize(main_btn, main_btn)
 
@@ -506,6 +518,17 @@ class MusicWindow(QDialog):
         self._start_random_loop_fn()
         self._refresh_now_playing()
         self._sync_play_button()
+
+    def _on_repeat_clicked(self) -> None:
+        self._toggle_single_repeat_fn()
+
+    def _sync_repeat_button(self) -> None:
+        on = self._single_repeat_getter()
+        self.repeat_button.setDown(on)
+        self.repeat_button.setToolTip("单曲循环 (开)" if on else "单曲循环")
+
+    def refresh_repeat_button(self) -> None:
+        self._sync_repeat_button()
 
     def _on_toggle_play_pause(self) -> None:
         self._toggle_play_pause_fn()
@@ -820,8 +843,10 @@ class MusicWindow(QDialog):
         apply(self.remove_button, "remove", "⌫")
         apply(self.prev_button, "prev", "⏮")
         apply(self.next_button, "next", "⏭")
+        apply(self.repeat_button, "repeat", "🔁")
         apply(self.random_button, "random", "🔀")
         self._sync_play_button()
+        self._sync_repeat_button()
 
     def _set_now_playing_text(self, title: str, artist: str, album: str) -> None:
         title_html = html.escape((title or "-").strip() or "-")

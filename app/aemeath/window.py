@@ -13,7 +13,7 @@ from typing import Any, Callable
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QSettings, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QCursor, QDesktopServices, QGuiApplication, QIcon, QMouseEvent, QMovie, QPixmap, QTransform
-from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
 from PySide6.QtWidgets import QApplication, QFileDialog, QLabel, QMenu, QMessageBox, QSystemTrayIcon
 
 try:
@@ -62,6 +62,14 @@ class Aemeath(QLabel):
         self._alter_pixmaps: list[QPixmap] = []
         self._alter_frame_index = 0
         self._alter_timer: QTimer | None = None
+        self._alter_video_mode = False
+        self._alter_video_players: list[QMediaPlayer] = []
+        self._alter_video_audios: list[QAudioOutput] = []
+        self._alter_video_sink: QVideoSink | None = None
+        self._alter_video_active_index: int = 0
+        self._alter_video_anchor_count: int = 0
+        self._alter_video_last_pixmap: QPixmap | None = None
+        self._alter_video_first_pixmap: QPixmap | None = None
         self._voice_sfx_player: QMediaPlayer | None = None
         self._voice_sfx_audio: QAudioOutput | None = None
         self._voice_finished_callback: Callable[[], None] | None = None
@@ -76,13 +84,14 @@ class Aemeath(QLabel):
         self._last_track_position_ms = 0
         self._supported_music_exts = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
         self._runtime_settings = QSettings("FleetSnowfluff", "Aemeath")
+        self._single_repeat = self._load_single_repeat()
         # Product requirement: always start with global hide OFF each launch.
         self._reset_focus_hide_mascot_on_startup()
         self._tray_icon: QSystemTrayIcon | None = None
         self._tray_focus_action: QAction | None = None
         self._focus_menu: QMenu | None = None
         self._snowfluff_scale_percent = 80
-        self._aemeath_scale_percent = 40
+        self._aemeath_scale_percent = 30
         self._sound_effects_enabled = True
 
         self._movies = {}
@@ -806,6 +815,27 @@ class Aemeath(QLabel):
     def _persist_music_volume_percent(self, volume_percent: int) -> None:
         self._runtime_settings.setValue("audio/music_volume_percent", max(0, min(100, int(volume_percent))))
 
+    def _load_single_repeat(self) -> bool:
+        raw = self._runtime_settings.value("music/single_repeat", False)
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, str):
+            return raw.lower() in ("true", "1", "yes")
+        return bool(raw)
+
+    def _persist_single_repeat(self, enabled: bool) -> None:
+        self._runtime_settings.setValue("music/single_repeat", enabled)
+
+    def _single_repeat_enabled(self) -> bool:
+        return self._single_repeat
+
+    def _toggle_single_repeat(self) -> None:
+        self._single_repeat = not self._single_repeat
+        self._persist_single_repeat(self._single_repeat)
+        music_window = self._music_window
+        if self._is_widget_alive(music_window) and music_window is not None:
+            music_window.refresh_repeat_button()
+
     def _load_focus_hide_mascot_enabled(self) -> bool:
         raw = self._runtime_settings.value("focus/hide_mascot_enabled", False)
         if isinstance(raw, bool):
@@ -1152,7 +1182,7 @@ class Aemeath(QLabel):
         self._chat_window = None
 
     def _transform_emis(self) -> None:
-        """Toggle: carousel gif ↔ alter PNG sequence loop (24FPS, 241 frames). Click again to switch back."""
+        """变身：优先使用 alter/alter.mov 在雪绒本体上循环播放（保留拖拽、右键等全部 GUI）；无视频则用 PNG 序列。再次点击可关闭。"""
         if self._is_alter_mode:
             self._exit_alter_mode()
             return
@@ -1160,13 +1190,101 @@ class Aemeath(QLabel):
         if not alter_dir.is_dir():
             QMessageBox.warning(self, "变身播片失败", "⚠️Warning：未找到 alter 素材目录（resources/alter/）")
             return
+        alter_video = alter_dir / "alter.mov"
+        if alter_video.exists():
+            self.hide()
+            self._play_transform_sfx()
+            QTimer.singleShot(1000, lambda: self._enter_alter_video_mode(alter_video))
+            return
         frames = self._collect_alter_frames(alter_dir)
         if not frames:
-            QMessageBox.warning(self, "变身播片失败", "⚠️Warning：alter 目录下未找到按帧序号排列的 PNG 图片")
+            QMessageBox.warning(self, "变身播片失败", "⚠️Warning：alter 目录下未找到 alter.mov 或按帧序号排列的 PNG 图片")
             return
         self.hide()
         self._play_transform_sfx()
         QTimer.singleShot(1000, lambda: self._enter_alter_mode(frames))
+
+    def _enter_alter_video_mode(self, alter_video_path: Path) -> None:
+        """在雪绒本体上以视频帧驱动变身，单播放器循环：EndOfMedia 时 setPosition(0) 并 play() 实现循环。"""
+        self._stop_flight()
+        if self.idle_switch_timer.isActive():
+            self.idle_switch_timer.stop()
+        if self._current_movie is not None:
+            self._current_movie.stop()
+            try:
+                self._current_movie.frameChanged.disconnect(self._on_movie_frame_changed)
+            except (TypeError, RuntimeError):
+                pass
+            self._current_movie = None
+            self._current_movie_id = None
+        url = QUrl.fromLocalFile(str(alter_video_path))
+        self._alter_video_sink = QVideoSink(self)
+        self._alter_video_sink.videoFrameChanged.connect(self._on_alter_video_frame)
+        self._alter_video_players = []
+        self._alter_video_audios = []
+        audio = QAudioOutput(self)
+        audio.setVolume(0)
+        player = QMediaPlayer(self)
+        player.setAudioOutput(audio)
+        player.setSource(url)
+        player.setPlaybackRate(1.0)
+        player.setVideoOutput(self._alter_video_sink)
+        player.mediaStatusChanged.connect(self._on_alter_video_status_changed)
+        player.errorOccurred.connect(self._on_alter_video_error)
+        self._alter_video_audios.append(audio)
+        self._alter_video_players.append(player)
+        self._alter_video_active_index = 0
+        self._is_alter_mode = True
+        self._alter_video_mode = True
+        self.setScaledContents(True)  # 保持视频原生分辨率，由控件按目标尺寸绘制，避免先缩小位图变糊
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        player.play()
+
+    def _on_alter_video_frame(self, frame) -> None:
+        if not self._alter_video_mode or not frame.isValid():
+            return
+        image = frame.toImage()
+        if image.isNull():
+            return
+        pixmap = QPixmap.fromImage(image)
+        if pixmap.isNull():
+            return
+        source_size = pixmap.size()
+        # 不缩放视频资源本身，保持原生 DPI；仅按比例设定控件显示尺寸，由 scaledContents 在绘制时缩放
+        target_display_size = (
+            self._scaled_size_by_percent(source_size, self._aemeath_scale_percent)
+            if source_size.isValid()
+            else pixmap.size()
+        )
+        if self._alter_video_first_pixmap is None:
+            self._alter_video_first_pixmap = pixmap.copy()
+        self._alter_video_last_pixmap = pixmap.copy()
+        if self.size() != target_display_size:
+            self.resize(target_display_size)
+        if self._alter_video_anchor_count > 0:
+            self._alter_video_anchor_count -= 1
+            if self._alter_video_first_pixmap is not None and not self._alter_video_first_pixmap.isNull():
+                self.setPixmap(self._alter_video_first_pixmap)
+        else:
+            self.setPixmap(pixmap)
+
+    def _on_alter_video_status_changed(self, status: object) -> None:
+        if status != QMediaPlayer.MediaStatus.EndOfMedia:
+            return
+        if not self._alter_video_mode or len(self._alter_video_players) != 1:
+            return
+        player = self._alter_video_players[0]
+        if self._alter_video_first_pixmap is not None and not self._alter_video_first_pixmap.isNull():
+            self.setPixmap(self._alter_video_first_pixmap)
+        self._alter_video_anchor_count = 3
+        player.setPosition(0)
+        player.play()
+
+    def _on_alter_video_error(self, _error, error_string: str) -> None:
+        QMessageBox.warning(self, "变身视频播放失败", error_string or "视频解码或播放失败")
+        self._exit_alter_mode()
 
     def _play_transform_sfx(self) -> None:
         """Play transform voice."""
@@ -1309,6 +1427,20 @@ class Aemeath(QLabel):
         if not self._is_alter_mode:
             return
         self._is_alter_mode = False
+        if self._alter_video_mode:
+            self._alter_video_mode = False
+            self.setScaledContents(False)
+            for p in self._alter_video_players:
+                p.stop()
+                p.setVideoOutput(None)
+                p.setAudioOutput(None)
+                p.deleteLater()
+            self._alter_video_players = []
+            self._alter_video_audios = []
+            self._alter_video_sink = None
+            self._alter_video_anchor_count = 0
+            self._alter_video_last_pixmap = None
+            self._alter_video_first_pixmap = None
         self._alter_frames = []
         self._alter_pixmaps = []
         if self._alter_timer is not None and self._alter_timer.isActive():
@@ -1515,7 +1647,10 @@ class Aemeath(QLabel):
             self._player.setPosition(self._pending_resume_seek_ms)
             self._pending_resume_seek_ms = 0
         if status == QMediaPlayer.MediaStatus.EndOfMedia:
-            self._play_next_track()
+            if self._single_repeat and self._current_track() is not None:
+                self._play_current_playlist_track(start_position_ms=0)
+            else:
+                self._play_next_track()
             music_window = self._music_window
             if self._is_widget_alive(music_window) and music_window is not None:
                 music_window.refresh_now_playing()
@@ -1629,6 +1764,8 @@ class Aemeath(QLabel):
                 get_volume_percent_fn=self._music_volume_percent,
                 set_volume_percent_fn=self._set_music_volume_percent,
                 stop_playback_fn=self._stop_music_playback,
+                single_repeat_getter=self._single_repeat_enabled,
+                toggle_single_repeat_fn=self._toggle_single_repeat,
                 parent=None,
             )
             self._music_window.readyForPlayback.connect(self._on_music_window_ready_for_playback)

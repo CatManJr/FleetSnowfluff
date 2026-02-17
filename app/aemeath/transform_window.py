@@ -45,9 +45,16 @@ class TransformWindow(QDialog):
         self._player.mediaStatusChanged.connect(self._on_media_status_changed)
         self._player.errorOccurred.connect(self._on_playback_error)
 
-    def play_media(self, media_path: Path, target_geometry, desktop_scene_mode: bool = False) -> None:
+    def play_media(
+        self,
+        media_path: Path,
+        target_geometry,
+        desktop_scene_mode: bool = False,
+        loop: bool = False,
+    ) -> None:
         self._emitted_finished = False
         self._desktop_scene_mode = desktop_scene_mode
+        self._loop = loop
         self._last_frame_pixmap = None
         if desktop_scene_mode:
             # Use normal frameless window (not Tool) to avoid macOS titlebar-space
@@ -80,6 +87,10 @@ class TransformWindow(QDialog):
 
     def _on_media_status_changed(self, status) -> None:
         if status == QMediaPlayer.MediaStatus.EndOfMedia:
+            if getattr(self, "_loop", False):
+                self._player.setPosition(0)
+                self._player.play()
+                return
             self.close()
             return
         if status == QMediaPlayer.MediaStatus.InvalidMedia:
