@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+import sys
 from difflib import SequenceMatcher
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 from collections.abc import Callable
 
-from PySide6.QtCore import QEvent, QObject, QSize, Qt, QThread, Signal
-from PySide6.QtGui import QCloseEvent, QFontMetrics, QIcon, QImage, QPixmap
+from PySide6.QtCore import QEvent, QObject, QRect, QSize, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtGui import QCloseEvent, QDesktopServices, QFontMetrics, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -169,6 +171,7 @@ class ChatWindow(QDialog):
                 if candidate.exists():
                     self._send_icon_path = candidate
                     break
+        self._export_dir = self._config_dir / "chat_exports"
         self._records: list[dict[str, str]] = []
         self._thread: QThread | None = None
         self._worker: ChatWorker | None = None
@@ -485,6 +488,24 @@ class ChatWindow(QDialog):
             QPushButton#sendButton:pressed {{
                 padding-top: 2px;
             }}
+            QPushButton#fileCardBtn {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(244, 249, 255, 0.98),
+                    stop:1 rgba(231, 242, 255, 0.94)
+                );
+                border: 1px solid rgba(183, 205, 232, 0.88);
+                border-radius: 12px;
+                color: #23415f;
+                text-align: left;
+                padding: 8px 10px;
+                font-size: {px(13, scale)}px;
+                font-weight: 600;
+            }}
+            QPushButton#fileCardBtn:hover {{
+                border-color: rgba(150, 183, 220, 0.96);
+                background: rgba(236, 246, 255, 0.94);
+            }}
             QPushButton:disabled {{
                 background: #f0e3ea;
                 border-color: #dbc5d1;
@@ -493,7 +514,7 @@ class ChatWindow(QDialog):
             """
         )
 
-    def _add_chat_bubble(self, role: str, text: str, ts: str, pending: bool = False) -> int:
+    def _add_chat_bubble(self, role: str, text: str, ts: str, pending: bool = False, force_scroll: bool = False) -> int:
         t = self._chat_theme_tokens()
         should_autoscroll = self._should_autoscroll_chat()
         item = QListWidgetItem(self.chat_list)
@@ -519,16 +540,29 @@ class ChatWindow(QDialog):
 
         bubble = QFrame(side)
         bubble_layout = QVBoxLayout(bubble)
-        bubble_layout.setContentsMargins(13, 11, 13, 11)
+        bubble_layout.setContentsMargins(14, 12, 14, 14)
         bubble_layout.setSpacing(4)
         bubble.setMaximumWidth(self._px(324))
 
         body = QLabel(text, bubble)
+        body.setTextFormat(Qt.TextFormat.PlainText)
         body.setWordWrap(True)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        body.setContentsMargins(2, 1, 2, 3)
+        body.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
+        body.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        body_max_w = max(80, bubble.maximumWidth() - 26)
+        body.setMaximumWidth(body_max_w)
+        metrics = body.fontMetrics()
+        text_rect = metrics.boundingRect(
+            QRect(0, 0, body_max_w, 20000),
+            int(Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextExpandTabs),
+            text if text else " ",
+        )
+        body.setMinimumHeight(max(self._px(22), text_rect.height() + self._px(6)))
         body.setStyleSheet(
             f"font-size: {self._px(14)}px; color: #26374a; "
-            "background: transparent; border: none; margin: 0; padding: 0;"
+            "background: transparent; border: none; margin: 0; padding: 1px 2px 3px 2px;"
         )
 
         if role == "user":
@@ -565,12 +599,137 @@ class ChatWindow(QDialog):
             row.addStretch(1)
 
         bubble_layout.addWidget(body)
+        body.raise_()
 
-        item.setSizeHint(wrapper.sizeHint())
+        wrapper.adjustSize()
+        hint = wrapper.sizeHint()
+        hint.setHeight(hint.height() + self._px(4))
+        item.setSizeHint(hint)
         self.chat_list.setItemWidget(item, wrapper)
-        if should_autoscroll:
+        need_scroll = force_scroll or should_autoscroll
+        if need_scroll:
             self.chat_list.scrollToBottom()
+        # Re-apply height after layout settles to avoid wrapped-text clipping.
+        QTimer.singleShot(
+            0,
+            lambda: (
+                item.setSizeHint(wrapper.sizeHint()),
+                self.chat_list.scrollToBottom() if need_scroll else None,
+            ),
+        )
         return self.chat_list.count() - 1
+
+    def _add_file_bubble(self, rel_path: str, lang: str, ts: str, force_scroll: bool = False) -> int:
+        should_autoscroll = self._should_autoscroll_chat()
+        item = QListWidgetItem(self.chat_list)
+        wrapper = QWidget()
+        row = QHBoxLayout(wrapper)
+        row.setContentsMargins(8, 7, 8, 7)
+        row.setSpacing(0)
+
+        side = QWidget(wrapper)
+        side_layout = QVBoxLayout(side)
+        side_layout.setContentsMargins(0, 0, 0, 0)
+        side_layout.setSpacing(5)
+
+        time_label = QLabel(ts, side)
+        t = self._chat_theme_tokens()
+        time_label.setStyleSheet(
+            f"color:{t['timestamp']}; font-size:{self._px(11)}px; letter-spacing:0.3px; padding:0 2px;"
+        )
+        time_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        side_layout.addWidget(time_label)
+
+        card = QPushButton(side)
+        card.setObjectName("fileCardBtn")
+        card.setMaximumWidth(self._px(324))
+        card.setCursor(Qt.CursorShape.PointingHandCursor)
+        p = Path(rel_path)
+        filename = p.name if p.name else rel_path
+        label = lang.strip() if lang.strip() else "text"
+        card.setText(f"📄 {filename}\n{label} · 点击打开")
+
+        def _open_file() -> None:
+            self._open_exported_file(rel_path)
+
+        card.clicked.connect(_open_file)
+        side_layout.addWidget(card)
+        row.addWidget(side)
+        row.addStretch(1)
+
+        wrapper.adjustSize()
+        hint = wrapper.sizeHint()
+        hint.setHeight(hint.height() + self._px(4))
+        item.setSizeHint(hint)
+        self.chat_list.setItemWidget(item, wrapper)
+        need_scroll = force_scroll or should_autoscroll
+        if need_scroll:
+            self.chat_list.scrollToBottom()
+        QTimer.singleShot(
+            0,
+            lambda: (
+                item.setSizeHint(wrapper.sizeHint()),
+                self.chat_list.scrollToBottom() if need_scroll else None,
+            ),
+        )
+        return self.chat_list.count() - 1
+
+    def _open_exported_file(self, rel_path: str) -> None:
+        raw = Path(rel_path)
+        candidates: list[Path] = []
+        if raw.is_absolute():
+            candidates.append(raw)
+        else:
+            candidates.extend(
+                [
+                    self._config_dir / raw,
+                    self._export_dir / raw,
+                    Path.cwd() / raw,
+                ]
+            )
+
+        target: Path | None = None
+        for c in candidates:
+            if c.exists():
+                target = c.resolve()
+                break
+        if target is None:
+            QMessageBox.warning(self, "打开失败", f"找不到文件：\n{rel_path}\n\n导出目录：{self._export_dir}")
+            return
+
+        if QDesktopServices.openUrl(QUrl.fromLocalFile(str(target))):
+            return
+
+        if sys.platform == "darwin":
+            try:
+                subprocess.run(["open", "-R", str(target)], check=False)
+                return
+            except Exception:
+                pass
+
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(target.parent)))
+
+    def _render_assistant_content(self, text: str, ts: str, force_scroll: bool = False) -> None:
+        marker_re = re.compile(r"\[代码块已保存:\s*([^\]]+)\]\s+([^\n]+)")
+        cursor = 0
+        matched = False
+        for m in marker_re.finditer(text):
+            matched = True
+            start, end = m.span()
+            if start > cursor:
+                segment = text[cursor:start].strip()
+                if segment:
+                    self._add_chat_bubble("assistant", segment, ts, force_scroll=force_scroll)
+            lang = m.group(1).strip()
+            rel_path = m.group(2).strip()
+            if rel_path:
+                self._add_file_bubble(rel_path, lang, ts, force_scroll=force_scroll)
+            cursor = end
+        tail = text[cursor:].strip()
+        if tail:
+            self._add_chat_bubble("assistant", tail, ts, force_scroll=force_scroll)
+        if (not matched) and (not tail):
+            self._add_chat_bubble("assistant", text, ts, force_scroll=force_scroll)
 
     def _should_autoscroll_chat(self) -> bool:
         bar = self.chat_list.verticalScrollBar()
@@ -640,7 +799,7 @@ class ChatWindow(QDialog):
         for item in self._records:
             ts = item.get("timestamp", "")
             self._add_chat_bubble("user", item["user"], ts)
-            self._add_chat_bubble("assistant", item["assistant"], ts)
+            self._render_assistant_content(item["assistant"], ts)
 
     def _send_message(self) -> None:
         prompt = self.input_box.toPlainText().strip()
@@ -652,7 +811,7 @@ class ChatWindow(QDialog):
 
         self._pending_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self._pending_prompt = prompt
-        self._add_chat_bubble("user", prompt, self._pending_timestamp)
+        self._add_chat_bubble("user", prompt, self._pending_timestamp, force_scroll=True)
         self._pending_record_index = self._append_pending_history(prompt)
 
         api_key = (self._api_key_getter() or "").strip()
@@ -664,7 +823,9 @@ class ChatWindow(QDialog):
             return
         reasoning_enabled = bool(self._reasoning_enabled_getter())
         pending_text = "用户思考中..." if reasoning_enabled else "用户输入中..."
-        self._pending_index = self._add_chat_bubble("assistant", pending_text, self._pending_timestamp, pending=True)
+        self._pending_index = self._add_chat_bubble(
+            "assistant", pending_text, self._pending_timestamp, pending=True, force_scroll=True
+        )
 
         messages = self._build_context_messages(prompt)
         temperature = self._choose_temperature(prompt)
@@ -686,19 +847,151 @@ class ChatWindow(QDialog):
         self._thread.start()
 
     def _on_reply_success(self, answer: str) -> None:
+        rendered_answer = self._materialize_code_blocks(answer)
         if self._pending_index is not None and 0 <= self._pending_index < self.chat_list.count():
             self.chat_list.takeItem(self._pending_index)
-            self._add_chat_bubble("assistant", answer, self._pending_timestamp)
-        self._finalize_pending_history(answer)
+            self._render_assistant_content(rendered_answer, self._pending_timestamp, force_scroll=True)
+        self._finalize_pending_history(rendered_answer)
         self._pending_index = None
         self._pending_prompt = ""
         self.send_button.setDisabled(False)
         self.input_box.setReadOnly(False)
 
+    @staticmethod
+    def _code_extension(lang: str) -> str:
+        table = {
+            "python": "py",
+            "py": "py",
+            "javascript": "js",
+            "js": "js",
+            "typescript": "ts",
+            "ts": "ts",
+            "tsx": "tsx",
+            "jsx": "jsx",
+            "java": "java",
+            "go": "go",
+            "rust": "rs",
+            "rs": "rs",
+            "cpp": "cpp",
+            "c++": "cpp",
+            "c": "c",
+            "csharp": "cs",
+            "cs": "cs",
+            "swift": "swift",
+            "kotlin": "kt",
+            "php": "php",
+            "ruby": "rb",
+            "rb": "rb",
+            "bash": "sh",
+            "sh": "sh",
+            "shell": "sh",
+            "zsh": "sh",
+            "sql": "sql",
+            "json": "json",
+            "yaml": "yml",
+            "yml": "yml",
+            "toml": "toml",
+            "html": "html",
+            "css": "css",
+            "scss": "scss",
+            "markdown": "md",
+            "md": "md",
+            "xml": "xml",
+        }
+        normalized = lang.strip().lower()
+        return table.get(normalized, "txt")
+
+    def _materialize_code_blocks(self, answer: str) -> str:
+        # Tolerant fenced-code parser:
+        # - supports ``` / ```` / ~~~ fences
+        # - allows optional language tag
+        # - supports LF/CRLF
+        # - allows optional newline right after opening fence
+        pattern = re.compile(
+            r"(?P<fence>`{3,}|~{3,})[ \t]*(?P<lang>[a-zA-Z0-9_+\-#.]*)[ \t]*\r?\n?(?P<code>.*?)(?:\r?\n)?(?P=fence)",
+            re.DOTALL,
+        )
+        matches = list(pattern.finditer(answer))
+        if not matches:
+            return answer
+
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        out_dir = self._export_dir
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return answer
+
+        chunks: list[str] = []
+        cursor = 0
+        file_index = 1
+        for m in matches:
+            start, end = m.span()
+            if start > cursor:
+                chunks.append(answer[cursor:start])
+            lang = (m.group("lang") or "").strip()
+            code = m.group("code")
+            code_stripped = code.strip()
+            # Never force file export when block has no real code content.
+            if not code_stripped or not self._looks_like_code(code_stripped, lang):
+                chunks.append(answer[start:end])
+                cursor = end
+                continue
+            ext = self._code_extension(lang)
+            filename = f"reply_{stamp}_{file_index:02d}.{ext}"
+            file_index += 1
+            file_path = out_dir / filename
+            try:
+                file_path.write_text(code_stripped + "\n", encoding="utf-8")
+                exists_ok = file_path.exists()
+                size_ok = file_path.stat().st_size > 0 if exists_ok else False
+                if not (exists_ok and size_ok):
+                    chunks.append(answer[start:end])
+                    cursor = end
+                    continue
+                rel_path = file_path.relative_to(self._config_dir)
+                label = lang if lang else "text"
+                chunks.append(f"\n[代码块已保存: {label}] {rel_path}\n")
+            except OSError:
+                chunks.append(answer[start:end])
+            cursor = end
+        if cursor < len(answer):
+            chunks.append(answer[cursor:])
+
+        rendered = "".join(chunks).strip()
+        return rendered if rendered else answer
+
+    @staticmethod
+    def _looks_like_code(block: str, lang: str) -> bool:
+        if lang.strip():
+            return True
+        if "\n" in block and len(block) >= 20:
+            hints = (
+                "def ",
+                "class ",
+                "fn ",
+                "let ",
+                "const ",
+                "import ",
+                "from ",
+                "return ",
+                "if ",
+                "for ",
+                "while ",
+                "{",
+                "};",
+                "=>",
+                "::",
+                "pub ",
+                "#include",
+            )
+            return any(h in block for h in hints)
+        return False
+
     def _on_reply_failed(self, error_text: str) -> None:
         if self._pending_index is not None and 0 <= self._pending_index < self.chat_list.count():
             self.chat_list.takeItem(self._pending_index)
-            self._add_chat_bubble("assistant", f"[失败] {error_text}", self._pending_timestamp)
+            self._add_chat_bubble("assistant", f"[失败] {error_text}", self._pending_timestamp, force_scroll=True)
         self._finalize_pending_history(f"[失败] {error_text}")
         self._pending_index = None
         self.send_button.setDisabled(False)
@@ -709,6 +1002,14 @@ class ChatWindow(QDialog):
         default_system = (
             "You are Feixing Xuerong (Fleet Snowfluff), a cute desktop pet assistant. "
             "Keep replies concise and warm."
+        )
+        code_format_system = (
+            "Output formatting requirement: "
+            "Only when your reply truly includes code, commands, config snippets, or file contents, "
+            "you MUST wrap each code segment in fenced markdown blocks using triple backticks, "
+            "and include a language tag when possible (e.g. ```rust, ```python, ```json). "
+            "Do not output bare code outside fenced blocks. "
+            "If the reply is normal conversation without code, do NOT use fenced blocks."
         )
         messages: list[dict[str, str]] = []
         persona_prompt = (self._persona_prompt_getter() or "").strip()
@@ -724,6 +1025,7 @@ class ChatWindow(QDialog):
                     ),
                 }
             )
+            messages.append({"role": "system", "content": code_format_system})
             messages.append(
                 {
                     "role": "system",
@@ -735,6 +1037,7 @@ class ChatWindow(QDialog):
             )
         else:
             messages.append({"role": "system", "content": default_system})
+            messages.append({"role": "system", "content": code_format_system})
 
         try:
             context_turns = max(0, int(self._context_turns_getter()))
