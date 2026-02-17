@@ -30,6 +30,11 @@ from .seal_widget import SealWidget
 from .settings_dialog import SettingsDialog
 
 
+def _force_exit_if_still_running() -> None:
+    """退出流程已调用 app.quit() 后若事件循环仍未结束则强制终止进程，避免残留进程。"""
+    os._exit(0)
+
+
 class Aemeath(QLabel):
     def __init__(self, resources_dir: Path) -> None:
         super().__init__()
@@ -1822,6 +1827,8 @@ class Aemeath(QLabel):
         app = QApplication.instance()
         if app is not None:
             app.quit()
+            # 若事件循环因计时器/线程等未在限定时间内退出，强制结束进程，避免残留进程影响下次 uv 使用 .venv
+            QTimer.singleShot(3000, _force_exit_if_still_running)
 
     def closeEvent(self, event) -> None:
         if not self._is_shutting_down:
