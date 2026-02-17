@@ -309,8 +309,7 @@ class ChatWindow(QDialog):
         input_layout.setContentsMargins(10, 8, 10, 8)
         input_layout.setSpacing(8)
         input_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        row_height = px(56, scale)
-        send_btn_w = px(44, scale)
+        row_height = px(52, scale)
 
         self.input_box = ChatInputBox(input_frame)
         self.input_box.setPlaceholderText("输入...（暂只支持文本）")
@@ -321,8 +320,8 @@ class ChatWindow(QDialog):
 
         self.send_button = QPushButton(input_frame)
         self.send_button.setObjectName("sendButton")
-        self.send_button.setMinimumSize(send_btn_w, row_height)
-        self.send_button.setMaximumSize(send_btn_w, row_height)
+        self.send_button.setMinimumSize(row_height, row_height)
+        self.send_button.setMaximumSize(row_height, row_height)
         self.send_button.setToolTip("发送")
         if self._send_icon_path is not None and self._send_icon_path.exists():
             send_icon = self._load_send_icon(self._send_icon_path)
@@ -340,7 +339,8 @@ class ChatWindow(QDialog):
                 self.send_button.setIcon(fluent)
             else:
                 self.send_button.setText("✈")
-        self._sync_send_icon_size()
+        send_icon_size = px(30, scale)
+        self.send_button.setIconSize(QSize(send_icon_size, send_icon_size))
         self.send_button.clicked.connect(self._send_message)
 
         input_layout.addWidget(self.input_box, 1, Qt.AlignmentFlag.AlignVCenter)
@@ -355,8 +355,7 @@ class ChatWindow(QDialog):
 
     def _apply_scaled_stylesheet(self, scale: float | None = None) -> None:
         scale = self._ui_scale() if scale is None else scale
-        btn_h = px(40, scale)
-        btn_w = px(28, scale)
+        btn = px(52, scale)
         t = self._chat_theme_tokens()
         self.setStyleSheet(
             f"""
@@ -458,10 +457,10 @@ class ChatWindow(QDialog):
                 background: rgba(250, 253, 255, 0.96);
             }}
             QPushButton#sendButton {{
-                min-width: {btn_w}px;
-                max-width: {btn_w}px;
-                min-height: {btn_h}px;
-                max-height: {btn_h}px;
+                min-width: {btn}px;
+                max-width: {btn}px;
+                min-height: {btn}px;
+                max-height: {btn}px;
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:1,
                     stop:0 rgba(248, 185, 220, 0.90),
@@ -1053,18 +1052,6 @@ class ChatWindow(QDialog):
         self._nav_subtitle.setMinimumWidth(fixed_w)
         self._nav_subtitle.setMaximumWidth(fixed_w)
 
-    def _sync_send_icon_size(self) -> None:
-        if not hasattr(self, "send_button"):
-            return
-        if self.send_button.icon().isNull():
-            return
-        edge = min(self.send_button.width(), self.send_button.height())
-        if edge <= 0:
-            return
-        # Intentionally exceed button edge a bit, clipped by button bounds.
-        icon_edge = max(16, int(edge * 1.08))
-        self.send_button.setIconSize(QSize(icon_edge, icon_edge))
-
     def _on_call_started(self) -> None:
         self._set_call_status(True)
         self.hide()
@@ -1085,15 +1072,15 @@ class ChatWindow(QDialog):
 
     def _refresh_scaled_ui(self) -> None:
         scale = self._ui_scale()
-        row_height = px(56, scale)
-        send_btn_w = px(44, scale)
+        row_height = px(52, scale)
         if hasattr(self, "input_box"):
             self.input_box.setMinimumHeight(row_height)
             self.input_box.setMaximumHeight(row_height)
         if hasattr(self, "send_button"):
-            self.send_button.setMinimumSize(send_btn_w, row_height)
-            self.send_button.setMaximumSize(send_btn_w, row_height)
-            self._sync_send_icon_size()
+            self.send_button.setMinimumSize(row_height, row_height)
+            self.send_button.setMaximumSize(row_height, row_height)
+            if not self.send_button.icon().isNull():
+                self.send_button.setIconSize(QSize(px(30, scale), px(30, scale)))
         self._apply_scaled_stylesheet(scale)
         self._sync_nav_subtitle_width()
 
