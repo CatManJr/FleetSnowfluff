@@ -339,7 +339,7 @@ class ChatWindow(QDialog):
                 self.send_button.setIcon(fluent)
             else:
                 self.send_button.setText("✈")
-        send_icon_size = px(30, scale)
+        send_icon_size = px(36, scale)
         self.send_button.setIconSize(QSize(send_icon_size, send_icon_size))
         self.send_button.clicked.connect(self._send_message)
 
