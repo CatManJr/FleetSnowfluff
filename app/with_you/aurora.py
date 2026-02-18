@@ -41,7 +41,7 @@ AURORA_X_MARGIN_LEFT = 0.01  # 水平范围：左边界（相对宽度，负值�
 AURORA_X_MARGIN_RIGHT = 0.99  # 水平范围：右边界（相对宽度，>1 表示超出右边）
 
 # 变化频率（可改这里，<1 更慢/更疏）
-AURORA_TIME_FREQ = 0.4  # 时间：波动速度（1=原速）
+AURORA_TIME_FREQ = 0.2  # 时间：波动速度（1=原速）
 AURORA_SPATIAL_FREQ = 0.6  # 空间：沿 x 的波浪疏密（1=原样，越小波浪越少）
 
 # 竖线明带：窄→调大粗细；密→减小根数
@@ -299,7 +299,7 @@ class Aurora(QWidget):
             depth = max(0.0, min(1.0, depth))
             depth_bright = 0.5 + 0.5 * depth  # 远 0.5x ~ 近 1x
             depth_width = 0.65 + 0.35 * depth  # 远更细、近更粗
-            peak_alpha = int(128 * depth_bright)
+            peak_alpha = int(96 * depth_bright)
             pen_w = core_pen_w * depth_width
             grad = self._stroke_gradient(y_top, y_bottom, x, max(40, peak_alpha))
             for pass_alpha, pass_width in [(0.10, 2.0), (0.28, 1.0)]:
