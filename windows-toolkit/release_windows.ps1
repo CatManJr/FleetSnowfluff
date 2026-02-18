@@ -1,8 +1,19 @@
+# One-command Windows release build for Fleet Snowfluff.
+# Builds .exe with PyInstaller and packages installer with Inno Setup.
+# Aligned with release_macos.sh: paths, version, excludes, sanitize, optional resource compression.
+#
+# Usage:
+#   .\release_windows.ps1
+#   .\release_windows.ps1 -Version v1.2.0
+#   $env:RESOURCE_COMPRESS="1"; .\release_windows.ps1
+
 param(
     [string]$Version = "",
     [switch]$SkipVideoConvert
 )
 
+# Optional env (same as macOS): RESOURCE_COMPRESS=1 to optimize stage;
+# JPEG_QUALITY, MP3_BITRATE, M4A_BITRATE, OGG_QUALITY for compression settings.
 $ErrorActionPreference = "Stop"
 
 # Compatible check for Windows (works on PS 5.1 and PS Core)
@@ -11,23 +22,23 @@ if (-not $IsWindowsPlatform) {
     throw "This script only supports Windows."
 }
 
+# Paths aligned with release_macos.sh: ScriptDir = toolkit dir, ProjectRoot = src, RepoRoot = repo root
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-# Try to keep paths relative if possible, but Resolve-Path usually returns absolute.
-# We will use relative path calculation based on ScriptDir for clarity in output.
 $ProjectRoot = Join-Path $ScriptDir ".."
 if (Test-Path $ProjectRoot) { $ProjectRoot = (Resolve-Path $ProjectRoot).Path }
+$RepoRoot = Join-Path $ProjectRoot ".."
+if (Test-Path $RepoRoot) { $RepoRoot = (Resolve-Path $RepoRoot).Path }
 
-# Ensure release folder is parallel to src (ProjectRoot is src currently based on user context, wait)
-# The user cloned to 'src'. So $ScriptDir is .../src/windows-toolkit.
-# $ProjectRoot is .../src.
-# Parallel to src means .../release, which is .../src/../release.
-$ReleaseDir = Join-Path (Join-Path $ProjectRoot "..") "release"
+$ReleaseDir = Join-Path $RepoRoot "release"
 $BuildDir = Join-Path $ScriptDir "build"
-$ResourceStageDir = Join-Path $BuildDir "resources_win_pack"
+$ResourceStageDir = Join-Path $BuildDir "resources_release"
 $AppName = "Fleet Snowfluff"
 
+# Version from pyproject.toml (same as macOS; fallback v1.2.0beta)
 if (-not $Version) {
-    $Version = python -c "from pathlib import Path; import tomllib; p=Path('pyproject.toml'); print(tomllib.loads(p.read_text(encoding='utf-8')).get('project',{}).get('version','v1.0.2') if p.exists() else 'v1.0.2')"
+    $PyprojectPath = Join-Path $ProjectRoot "pyproject.toml"
+    $Version = & python -c "import sys,os,tomllib; path=sys.argv[-1] if len(sys.argv)>1 else ''; d=tomllib.loads(open(path,'rb').read()) if path and os.path.isfile(path) else {}; print(d.get('project',{}).get('version','v1.2.0beta'))" $PyprojectPath 2>$null
+    if (-not $Version) { $Version = "v1.2.0beta" }
 }
 
 $InstallerBaseName = "FleetSnowfluff-$Version-Windows-Installer"
@@ -56,23 +67,40 @@ function Test-ReleaseBundleSafety {
         }
     }
 
+    # Same as macOS: byte-scan all files (including binary) for RELEASE_CANARY; skip >8MB
     $canary = $env:RELEASE_CANARY
     if ($canary) {
-        $files = Get-ChildItem -Path $TargetDir -Recurse -File -ErrorAction SilentlyContinue
-        foreach ($f in $files) {
-            try {
-                if ($f.Length -gt 8MB) { continue }
-                $content = [System.IO.File]::ReadAllText($f.FullName)
-                if ($content -like "*$canary*") {
-                    throw "LEAKED_CANARY::$($f.FullName)"
-                }
-            } catch {
-                if ($_.Exception.Message -like "LEAKED_CANARY::*") {
-                    $path = $_.Exception.Message.Substring("LEAKED_CANARY::".Length)
-                    throw "RELEASE_CANARY leaked into bundle: $path"
-                }
-                # Ignore unreadable/binary files.
+        $canaryScript = Join-Path $ScriptDir "canary_check.py"
+        $TargetDirEscaped = $TargetDir -replace "'", "''"
+        @"
+import sys
+from pathlib import Path
+root = Path(r'$TargetDirEscaped')
+needle = sys.argv[1] if len(sys.argv) > 1 else ''
+if not needle:
+    sys.exit(0)
+needle_b = needle.encode('utf-8')
+for p in root.rglob('*'):
+    if not p.is_file():
+        continue
+    try:
+        if p.stat().st_size > 8 * 1024 * 1024:
+            continue
+        data = p.read_bytes()
+    except OSError:
+        continue
+    if needle_b in data:
+        print(p)
+        sys.exit(2)
+sys.exit(0)
+"@ | Set-Content -Path $canaryScript -Encoding UTF8
+        try {
+            $out = & python $canaryScript $canary 2>&1
+            if ($LASTEXITCODE -eq 2) {
+                throw "RELEASE_CANARY leaked into bundle: $out"
             }
+        } finally {
+            Remove-Item $canaryScript -Force -ErrorAction SilentlyContinue
         }
     }
 }
@@ -91,10 +119,11 @@ function Resolve-Iscc {
     throw "Inno Setup compiler (ISCC.exe) not found. Install Inno Setup 6 first."
 }
 
+# Same layout as macOS: repo root resources first
 function Resolve-ResourcesDir {
     $candidates = @(
-        (Join-Path $ProjectRoot "resources"),
-        (Join-Path $ProjectRoot "..\resources")
+        (Join-Path $RepoRoot "resources"),
+        (Join-Path $ProjectRoot "resources")
     )
     foreach ($path in $candidates) {
         if (Test-Path $path -PathType Container) {
@@ -170,19 +199,6 @@ function New-ResourceStageOnlyMp4 {
     }
 }
 
-function Resolve-ResourcesDir {
-    $candidates = @(
-        (Join-Path $ProjectRoot "resources"),
-        (Join-Path $ProjectRoot "..\resources")
-    )
-    foreach ($path in $candidates) {
-        if (Test-Path $path -PathType Container) {
-            return $path
-        }
-    }
-    throw "Could not locate resources directory."
-}
-
 Write-Host "==> Sync dependencies"
 Push-Location $ScriptDir
 uv sync
@@ -232,8 +248,47 @@ if src.exists():
     Remove-Item $genIconFile -Force
 }
 
-Write-Host "==> Preparing resources (mp4 only for videos)"
+Write-Host "==> Preparing release resources"
 New-ResourceStageOnlyMp4 -SourceDir $ResourcesDir -TargetDir $ResourceStageDir
+if ($env:RESOURCE_COMPRESS -eq "1") {
+    $jq = [int][Math]::Max(20, [Math]::Min(95, [int](if ($env:JPEG_QUALITY) { $env:JPEG_QUALITY } else { 82 })))
+    $mp3 = if ($env:MP3_BITRATE) { $env:MP3_BITRATE } else { "128k" }
+    $m4a = if ($env:M4A_BITRATE) { $env:M4A_BITRATE } else { "128k" }
+    $ogg = if ($env:OGG_QUALITY) { $env:OGG_QUALITY } else { "4" }
+    $optScript = Join-Path $ScriptDir "opt_resources.py"
+    @"
+import shutil, subprocess, sys
+from pathlib import Path
+stage = Path(r'$($ResourceStageDir -replace "'", "''")')
+ffmpeg = shutil.which('ffmpeg')
+jq, mp3, m4a, ogg = $jq, '$mp3', '$m4a', '$ogg'
+saved = 0
+for p in stage.rglob('*'):
+    if not p.is_file(): continue
+    suf = p.suffix.lower()
+    if suf in ('.mp3','.m4a','.ogg') and ffmpeg and p.stat().st_size >= 512*1024:
+        tmp = p.with_suffix(p.suffix + '.tmp')
+        args = [ffmpeg,'-y','-i',str(p),'-map_metadata','-1','-vn']
+        if suf == '.mp3': args += ['-c:a','libmp3lame','-b:a',mp3]
+        elif suf == '.m4a': args += ['-c:a','aac','-b:a',m4a]
+        else: args += ['-c:a','libvorbis','-q:a',ogg]
+        args.append(str(tmp))
+        if subprocess.run(args, capture_output=True).returncode == 0:
+            old_sz, new_sz = p.stat().st_size, tmp.stat().st_size
+            if 0 < new_sz < old_sz:
+                p.unlink(missing_ok=True); tmp.replace(p); saved += old_sz - new_sz
+        if tmp.exists(): tmp.unlink(missing_ok=True)
+print(f'   optimized audio, saved={saved/(1024*1024):.2f}MB')
+"@ | Set-Content -Path $optScript -Encoding UTF8
+    & python $optScript
+    Remove-Item $optScript -Force -ErrorAction SilentlyContinue
+}
+
+# Exclude modules (same as macOS) to keep bundle smaller
+$PyiExcludeModules = @(
+    "pytest", "_pytest", "hypothesis", "IPython", "ipykernel", "jupyter",
+    "jupyter_client", "jupyter_core", "notebook", "matplotlib", "pandas", "scipy"
+)
 
 Write-Host "==> Building app with PyInstaller"
 $pyiArgs = @(
@@ -250,11 +305,19 @@ $pyiArgs = @(
     "--add-data", "$ProjectRoot\config\FleetSnowfluff.json;resources/config",
     "$ProjectRoot\main.py"
 )
+foreach ($mod in $PyiExcludeModules) {
+    $pyiArgs += "--exclude-module", $mod
+}
 & uv @pyiArgs
 
 if (-not (Test-Path $AppExePath)) {
     throw "Build failed: executable not found at $AppExePath"
 }
+
+Write-Host "==> Sanitizing bundle (remove developer local data artifacts)"
+Get-ChildItem -Path $AppDistDir -Recurse -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -ieq "chat_history.jsonl" -or $_.Name -ieq "settings.json" } |
+    Remove-Item -Force -ErrorAction SilentlyContinue
 
 Write-Host "==> Auditing bundle for sensitive data leakage"
 Test-ReleaseBundleSafety -TargetDir $AppDistDir
