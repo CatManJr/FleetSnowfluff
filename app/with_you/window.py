@@ -198,8 +198,7 @@ class WithYouWindow(QDialog):
         interactive_root = QVBoxLayout(self._interactive_page)
         interactive_root.setContentsMargins(0, 0, 0, 0)
         interactive_root.setSpacing(0)
-        self._ribbon_overlay = Aurora(self)
-        self._ribbon_overlay.setGeometry(self.rect())
+        self._ribbon_overlay = Aurora(self._interactive_page)
         self._ribbon_overlay.hide()
 
         # Top: 上栏按内容自适应，保证轮次计数器不被挤压
@@ -1256,6 +1255,7 @@ class WithYouWindow(QDialog):
         self._play_start_sfx()
         self._set_interactive_mode()
         self._middle_stack.setCurrentWidget(self._withyou_panel)
+        self._sync_ribbon_overlay_stack()
         self._activate_withyou_video_output()
         if self._withyou_path is not None:
             self._play_media(self._withyou_path, loop=True)
@@ -1282,10 +1282,11 @@ class WithYouWindow(QDialog):
 
     def _set_interactive_mode(self) -> None:
         self._stack.setCurrentWidget(self._interactive_page)
-        if hasattr(self, "_ribbon_overlay"):
+        if hasattr(self, "_ribbon_overlay") and hasattr(self, "_interactive_page"):
+            self._ribbon_overlay.setGeometry(self._interactive_page.rect())
             self._ribbon_overlay.show()
-            self._ribbon_overlay.raise_()
             self._ribbon_overlay.set_animating(True)
+            self._sync_ribbon_overlay_stack()
 
     def _activate_cinematic_video_output(self, *, fill: bool) -> None:
         self._cinematic_fill_mode = fill
@@ -1307,11 +1308,25 @@ class WithYouWindow(QDialog):
             return
         self._active_video_label = cast(QLabel, self._withyou_video)
 
+    def _sync_ribbon_overlay_stack(self) -> None:
+        """极光 overlay 仅在 withyou 面板时置于中间区域顶层，顶栏/底栏保持在上，避免挡住按钮。"""
+        if not hasattr(self, "_ribbon_overlay") or not hasattr(self, "_middle_stack"):
+            return
+        if self._middle_stack.currentWidget() is self._withyou_panel:
+            self._ribbon_overlay.raise_()
+            self._top_bar.raise_()
+            self._bottom_bar.raise_()
+        else:
+            self._ribbon_overlay.lower()
+
     def _enter_config(self, *, preserve_progress: bool = False) -> None:
         self._phase = "config"
         self._set_view_mode("config")
         self._set_interactive_mode()
         self._middle_stack.setCurrentWidget(self._settings_scroll)
+        self._sync_ribbon_overlay_stack()
+        if hasattr(self, "_ribbon_overlay"):
+            self._ribbon_overlay.trigger_meteor_now()
         self._active_video_widget = None
         self._active_video_label = None
         self._break_intro_playing = False
@@ -1369,6 +1384,7 @@ class WithYouWindow(QDialog):
         self._set_view_mode("focus")
         self._set_interactive_mode()
         self._middle_stack.setCurrentWidget(self._withyou_panel)
+        self._sync_ribbon_overlay_stack()
         self._activate_withyou_video_output()
         self._total_rounds = max(1, int(self.rounds_spin.value()))
         self._current_round = 1
@@ -1425,6 +1441,7 @@ class WithYouWindow(QDialog):
         self._set_view_mode("focus")
         self._set_interactive_mode()
         self._middle_stack.setCurrentWidget(self._withyou_panel)
+        self._sync_ribbon_overlay_stack()
         self._activate_withyou_video_output()
         self.start_btn.setEnabled(False)
         self.rounds_spin.setEnabled(False)
@@ -1616,6 +1633,7 @@ class WithYouWindow(QDialog):
             self._break_intro_playing = False
             self._set_interactive_mode()
             self._middle_stack.setCurrentWidget(self._withyou_panel)
+            self._sync_ribbon_overlay_stack()
             self._activate_withyou_video_output()
             if self._withyou_path is not None:
                 self._play_media(self._withyou_path, loop=True)
@@ -1625,6 +1643,7 @@ class WithYouWindow(QDialog):
             self._start_intro_playing = False
             self._set_interactive_mode()
             self._middle_stack.setCurrentWidget(self._withyou_panel)
+            self._sync_ribbon_overlay_stack()
             self._activate_withyou_video_output()
             if self._withyou_path is not None:
                 self._play_media(self._withyou_path, loop=True)
@@ -1673,6 +1692,7 @@ class WithYouWindow(QDialog):
             self._start_intro_playing = False
             self._set_interactive_mode()
             self._middle_stack.setCurrentWidget(self._withyou_panel)
+            self._sync_ribbon_overlay_stack()
             self._activate_withyou_video_output()
             if self._withyou_path is not None:
                 self._play_media(self._withyou_path, loop=True)
@@ -1682,6 +1702,7 @@ class WithYouWindow(QDialog):
             self._break_intro_playing = False
             self._set_interactive_mode()
             self._middle_stack.setCurrentWidget(self._withyou_panel)
+            self._sync_ribbon_overlay_stack()
             self._activate_withyou_video_output()
             if self._withyou_path is not None:
                 self._play_media(self._withyou_path, loop=True)
@@ -1972,11 +1993,11 @@ class WithYouWindow(QDialog):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        if hasattr(self, "_ribbon_overlay"):
-            self._ribbon_overlay.setGeometry(self.rect())
-            if self._stack.currentWidget() is self._interactive_page:
-                self._ribbon_overlay.raise_()
         self._sync_middle_height()
+        if hasattr(self, "_ribbon_overlay") and hasattr(self, "_interactive_page"):
+            self._ribbon_overlay.setGeometry(self._interactive_page.rect())
+            if self._stack.currentWidget() is self._interactive_page:
+                self._sync_ribbon_overlay_stack()
         self._render_frame()
         self._reposition_audio_popups_if_shown()
 

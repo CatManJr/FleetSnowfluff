@@ -130,9 +130,10 @@ def build_focus_stylesheet(scale: float) -> str:
                 border: none;
                 border-radius: 0px;
             }}
+            /* 专注模式：顶栏/底栏半透明，让极光夜空透出 */
             QDialog#withYouWindow QFrame#topBar,
             QDialog#withYouWindow QFrame#bottomBar {{
-                background: rgba(9, 17, 34, 0.34);
+                background: rgba(9, 17, 34, 0.14);
                 border: none;
                 border-radius: 0px;
             }}
