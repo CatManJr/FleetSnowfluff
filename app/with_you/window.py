@@ -9,7 +9,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Union, cast
 
-from PySide6.QtCore import QPoint, QSettings, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QPoint, QSettings, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QColor, QIcon, QKeyEvent, QLinearGradient, QMouseEvent, QPainter, QPen, QPixmap, QPainterPath, QRegion
 from PySide6.QtMultimedia import QAudioDevice, QAudioOutput, QMediaPlayer, QMediaDevices, QVideoSink
 try:
@@ -2000,6 +2000,22 @@ class WithYouWindow(QDialog):
                 self._sync_ribbon_overlay_stack()
         self._render_frame()
         self._reposition_audio_popups_if_shown()
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() != QEvent.Type.WindowStateChange:
+            return
+        # 最小化时暂停极光动画以降低 CPU，恢复时再根据当前页决定是否开启动画
+        if not hasattr(self, "_ribbon_overlay"):
+            return
+        if self.isMinimized():
+            self._ribbon_overlay.set_animating(False)
+        else:
+            if (
+                self._stack.currentWidget() is self._interactive_page
+                and self._middle_stack.currentWidget() is self._withyou_panel
+            ):
+                self._ribbon_overlay.set_animating(True)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Escape:
