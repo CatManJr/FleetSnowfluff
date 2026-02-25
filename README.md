@@ -2,6 +2,9 @@
 
 鸣潮 3.1 共鸣者爱弥斯粉丝向赛博周边
 
+## 功能演示 🎥
+[《鸟朝》共呜者战斗演示｜飞行雪绒](https://www.bilibili.com/video/BV1ihZ8BdE26/)
+
 ## 用户安装 
 
 1. 在右侧 `Releases` 下载最新 `.dmg`。  
@@ -183,9 +186,6 @@ powershell -ExecutionPolicy Bypass -File .\windows-toolkit\release_windows.ps1 -
   - 调整‘飞行’速度
   - 调整DeepSeek 能读取的对话长度
 
-## 功能演示 🎥
-录制中，将上传视频平台
-
 ## 开发日志
 - 2-11-2026（UTC-5）：测试版锐意完善中。可能提供 English Version（虽然我也不知道有什么意义）。Windows 版待开发，或请您安装开发者版本后自行封包 
 - 2-12-2026（UTC-5）：优化飞行雪绒电台UI及交互设计，v0.1.5beta release   
@@ -199,4 +199,5 @@ powershell -ExecutionPolicy Bypass -File .\windows-toolkit\release_windows.ps1 -
 - 2-15-2026（UTC-5）：MacOS v1.2.0beta2。 优化设置。新增大模型 json 文件快捷入口，优化打包流程安全性。修复了每次新版本安装会情况旧版本数据的问题。新增陪伴天数记录。
 - 2-16-2026（UTC-5）：MacOS v1.2.0beta3。 使用 Fluenter 重构 UI 设计，更改子功能窗口主题色。重新设计陪伴模式的窗口，使用星空+极光动效。优化背景音遮挡语音提醒的问题。现在爱弥斯帮你写的代码会保存到本地并在飞讯里发给你。
 - 2-16-2026（UTC-5）：MacOS v1.2.0beta4。重做“爱弥斯，变身！”。GUI 从飞行雪绒切换爱弥斯形态，再次点击菜单可切换回。爱弥斯形态期间禁用飞行。原图：碎花 MV 背景图，使用 SeedDance2生成仿 Live2D 动画。剪映剪辑。
-- 正在进行：重构屎山。精修爱弥斯形态。极光重新实现，非常🐂🍺。测试稳定性。
+- 2-17-2026（UTC-5）：重构屎山。精修爱弥斯形态。极光重新实现，非常🐂🍺。测试稳定性。
+- 2-25-2026（UTC-5）：最小化窗口时暂停极光实时动画，释放 CPU 占用
